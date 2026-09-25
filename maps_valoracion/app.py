@@ -12,11 +12,29 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from maps import engine as E
-from maps import storage
+from maps import market, storage
 from maps.catalog import CATALOG, EFFORTS, GROUPS, LEGACY_MODELS, MODELS, PRESETS, PROPOSITOS, STATUS, TIPOS
 from maps.files import read_upload
 
 st.set_page_config(page_title="MAPS Valoración", page_icon="📊", layout="wide")
+st.markdown("""<style>
+.block-container {padding-top: 2.2rem; padding-bottom: 3rem; max-width: 1400px;}
+h1, h2, h3, h4 {letter-spacing: -0.01em;}
+[data-testid="stMetricValue"] {font-size: 1.3rem;}
+[data-testid="stMetricLabel"] p {font-size: .85rem;}
+/* Lista de especialistas: botones alineados a la izquierda, compactos */
+.st-key-agent_list [data-testid="stVerticalBlock"] {gap: .3rem;}
+.st-key-agent_list button {justify-content: flex-start; text-align: left; min-height: 2.5rem; padding: .35rem .8rem;}
+.st-key-agent_list button p {font-size: .92rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
+/* Foco visible para quien navega con teclado */
+button:focus-visible, [role="tab"]:focus-visible, [role="radio"]:focus-visible, a:focus-visible {
+  outline: 3px solid #2447D6 !important; outline-offset: 2px; }
+/* Etiqueta de estado: color + texto, nunca solo color */
+.maps-badge {display: inline-flex; align-items: center; gap: .4rem; padding: .15rem .65rem; border-radius: 999px;
+  font-size: .85rem; font-weight: 600; border: 1.5px solid var(--c); line-height: 1.5;}
+.maps-badge::before {content: ""; width: .55rem; height: .55rem; border-radius: 50%; background: var(--c);}
+.maps-meta {opacity: .8; font-size: .9rem;}
+</style>""", unsafe_allow_html=True)
 ss = st.session_state
 for k, v in {"page": "main", "nav_radio": "Cadena", "route": None, "flash": None, "model": "claude-haiku-4-5", "effort": "low"}.items():
     ss.setdefault(k, v)
@@ -41,6 +59,27 @@ def flash(kind: str, msg: str) -> None:
     ss.flash = (kind, msg)
 
 
+# Colores de estado con contraste suficiente en tema claro y oscuro; siempre van acompañados de texto.
+STATUS_COLOR = {"pending": "#8A94A6", "active": "#2F6FEB", "reviewing": "#2F6FEB", "hold": "#D97706",
+                "approved": "#16A34A", "stale": "#CA8A04", "blocked": "#9333EA", "error": "#DC2626"}
+
+
+def badge(status: str) -> str:
+    return f'<span class="maps-badge" style="--c:{STATUS_COLOR[status]}">{STATUS[status][0]}</span>'
+
+
+def icono(d: dict) -> str:
+    return d.get("icono", "🧩")
+
+
+def resumen(d: dict) -> str:
+    """Qué hace el especialista, en una frase (tooltip). Los personalizados usan el inicio de su tarea."""
+    if d.get("resumen"):
+        return d["resumen"]
+    t = d.get("tarea", "")
+    return t if len(t) < 180 else t[:177] + "…"
+
+
 # ─────────────────────────── cliente de Claude ───────────────────────────
 
 def get_ctx() -> E.Ctx | None:
@@ -58,18 +97,12 @@ def get_ctx() -> E.Ctx | None:
 
 # ─────────────────────────── barra lateral ───────────────────────────
 
+COSTE_CADENA = {"claude-haiku-4-5": "~0,3-0,8 $", "claude-sonnet-5": "~1,5-4 $", "claude-opus-5": "~3-10 $"}
+
 companies = storage.list_companies()
 with st.sidebar:
-    st.markdown("## 📊 MAPS · Valoración")
-    st.caption("CEO · especialistas · Supervisor · Documento Maestro")
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        st.text_input("API key de Anthropic", type="password", key="api_key",
-                      help="También puedes definir la variable de entorno ANTHROPIC_API_KEY o .streamlit/secrets.toml.")
-    ctx = get_ctx()
-    if not ctx:
-        st.warning("Sin API key: puedes preparar empresas e información, pero no ejecutar la cadena.")
-
-    st.divider()
+    st.markdown("### 📊 MAPS Valoración")
+    st.caption("Valoración de empresas con un equipo de especialistas de IA. Tú diriges como CEO.")
     if "cid_next" in ss:
         ss.cid = ss.pop("cid_next")
     if companies:
@@ -77,14 +110,25 @@ with st.sidebar:
         if ss.get("cid") not in ids:
             ss.cid = ids[0]
         st.selectbox("Empresa", ids, key="cid", format_func=lambda i: next(c["nombre"] for c in companies if c["id"] == i))
-    if st.button("➕ Nueva empresa", use_container_width=True):
+    if st.button("Nueva empresa", icon=":material/add:", use_container_width=True):
         ss.page = "nueva"
         st.rerun()
 
     st.divider()
-    st.selectbox("Modelo", list(MODELS), key="model", format_func=lambda m: MODELS[m]["label"])
-    st.selectbox("Esfuerzo de razonamiento", list(EFFORTS), key="effort", format_func=lambda e: EFFORTS[e],
-                 disabled=ss.model in LEGACY_MODELS, help="Haiku 4.5 no usa razonamiento: esta opción no le afecta.")
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        st.text_input("API key de Anthropic", type="password", key="api_key",
+                      help="Se crea en console.anthropic.com. Solo se guarda mientras esta pestaña esté abierta. "
+                           "También puedes definir la variable de entorno ANTHROPIC_API_KEY o .streamlit/secrets.toml.")
+    ctx = get_ctx()
+    if not ctx:
+        st.info("Sin API key puedes preparar empresas e información, pero no ejecutar a los especialistas.", icon=":material/key:")
+
+    with st.expander("Modelo y coste", icon=":material/tune:"):
+        st.selectbox("Modelo", list(MODELS), key="model", format_func=lambda m: MODELS[m]["label"],
+                     help="Haiku es el más barato; Sonnet y Opus razonan más y muestran su razonamiento, pero cuestan más.")
+        st.selectbox("Esfuerzo de razonamiento", list(EFFORTS), key="effort", format_func=lambda e: EFFORTS[e],
+                     disabled=ss.model in LEGACY_MODELS, help="Cuánto piensa el modelo antes de responder. Haiku 4.5 no razona: no le afecta.")
+        st.caption(f"Coste orientativo de una cadena completa con este modelo: **{COSTE_CADENA.get(ss.model, '?')}**.")
 
 P = storage.load_company(ss.cid) if companies and ss.get("cid") else None
 if P:
@@ -97,7 +141,8 @@ if P:
     if dirty:
         storage.save_company(P)
     with st.sidebar:
-        st.metric("Coste API de esta empresa", f"{P.get('coste', 0):.2f} $")
+        st.metric("Gasto de API en esta empresa", f"{P.get('coste', 0):.2f} $",
+                  help="Suma de todas las llamadas a Claude hechas para esta empresa. Yahoo Finance es gratis.")
 
 
 def save() -> None:
@@ -160,7 +205,8 @@ def page_new() -> None:
         data = company_fields("nc_", {})
         preset = st.selectbox("Plantilla de especialistas", list(PRESETS), format_func=lambda k: PRESETS[k]["label"],
                               help="Podrás activar o desactivar módulos después en Configuración.")
-        investigar = st.checkbox("Investigar en la web al crear la empresa (recomendado si es conocida o cotiza)", value=True)
+        yahoo = st.checkbox("Descargar datos de Yahoo Finance si pones ticker (gratis)", value=True)
+        investigar = st.checkbox("Investigar también en la web con Claude (de pago: ~0,05-0,15 $)", value=False)
         ok = st.form_submit_button("Crear empresa", type="primary")
     if ok:
         if not data["nombre"].strip():
@@ -172,6 +218,12 @@ def page_new() -> None:
              "web_especialistas": False, "web_uses": 2, "web_uses_research": 5, "agentes": {}, "info": [], "log": [],
              "resumen": None, "estado": "setup", "coste": 0.0, "creado": E.today()}
         E.add_log(p, "CEO", f"Empresa creada: {p['nombre']} ({PRESETS[preset]['label']}).")
+        if yahoo and p.get("ticker", "").strip():
+            try:
+                with st.spinner("Descargando datos de Yahoo Finance…"):
+                    add_yahoo(p, p["ticker"], [])
+            except E.MapsError as e:
+                flash("warning", str(e))
         storage.save_company(p)
         ss.cid_next = p["id"]
         ss.page = "main"
@@ -187,32 +239,56 @@ def page_new() -> None:
 # ─────────────────────────── cadena ───────────────────────────
 
 class UIHooks(E.Hooks):
+    """Muestra en directo qué está haciendo cada especialista: fase, razonamiento, búsquedas y texto."""
+
     def __init__(self, box):
         self.box = box
         self.last = 0.0
+        self.progress = box.progress(0.0, text="Preparando la cadena…")
+
+    def _label(self, d, fase: str) -> str:
+        return f"{icono(d)} **{d['nombre']}** · {fase}"
 
     def agent_start(self, d, attempt):
-        self.status = self.box.status(f"**{d['nombre']}** — trabajando" + (f" (intento {attempt + 1}/{E.MAX_ATTEMPTS})" if attempt else ""), expanded=True)
+        chain_ = ch()
+        i = next(k for k, x in enumerate(chain_) if x["id"] == d["id"])
+        self.progress.progress(i / len(chain_), text=f"Especialista {i + 1} de {len(chain_)}: {d['nombre']}")
+        self.d, self.writing = d, False
+        fase = "leyendo la información y el trabajo de los anteriores" + (f" (intento {attempt + 1} de {E.MAX_ATTEMPTS})" if attempt else "")
+        self.status = self.box.status(self._label(d, fase), expanded=True)
+        self.status.caption(f"**Qué hace:** {resumen(d)}")
         self.ph_search = self.status.empty()
+        self.ph_think = self.status.empty()
         self.ph = self.status.empty()
-        self.ph.caption("Pensando… un especialista tarda entre 1 y 4 minutos.")
+        self.ph.caption("Suele tardar entre 30 segundos y 3 minutos.")
+
+    def thinking(self, d, t):
+        if time.time() - self.last > 0.5:
+            self.status.update(label=self._label(d, "razonando"))
+            self.ph_think.info(f"**Razonando:** {md(t[-700:])}", icon=":material/psychology:")
+            self.last = time.time()
 
     def text(self, d, t):
+        if not self.writing:
+            self.writing = True
+            self.status.update(label=self._label(d, "escribiendo el análisis"))
+            self.ph_think.empty()
         if time.time() - self.last > 0.3:
             self.ph.markdown(md(t))
             self.last = time.time()
 
     def search(self, d, n):
-        self.ph_search.caption(f"🔎 Buscando en la web… ({n} búsquedas)")
-        self.ph.caption("Leyendo resultados…")
+        self.writing = False
+        self.status.update(label=self._label(d, f"buscando en la web ({n})"))
+        self.ph_search.caption(f"Búsquedas web realizadas: {n}")
 
     def reviewing(self, d):
         self.ph.markdown(md(E.agent(P, d["id"])["output"]))
-        self.status.update(label=f"**{d['nombre']}** — el Supervisor está revisando…")
+        self.status.update(label=self._label(d, "el Supervisor está revisando el trabajo"))
 
     def verdict(self, d, s):
         ok = s["sup_verdict"] == "aprobar"
-        self.status.update(label=f"**{d['nombre']}** — {'aprobado' if ok else 'rechazado'} por el Supervisor ({s['score']}/10)",
+        self.status.update(label=self._label(d, f"{'aprobado' if ok else 'rechazado'} por el Supervisor ({s['score']}/10)"),
                            state="complete" if ok else "error", expanded=False)
 
     def save(self):
@@ -289,26 +365,35 @@ def page_chain() -> None:
         execute_run(run_box, ss.pop("run_req"))
         return
 
-    c1, c2 = st.columns([1, 5])
-    label = "▶ Ejecutar cadena" if not started else ("✓ Completada" if first_todo is None else "▶ Continuar")
-    if c1.button(label, type="primary", disabled=first_todo is None or hold is not None or not ctx):
+    c1, c2 = st.columns([1, 4], vertical_alignment="center")
+    label = "Ejecutar cadena" if not started else ("Completada" if first_todo is None else "Continuar")
+    if c1.button(label, type="primary", icon=":material/play_arrow:" if first_todo is not None else ":material/check:",
+                 disabled=first_todo is None or hold is not None or not ctx, use_container_width=True,
+                 help="Los especialistas trabajan uno tras otro; lo ya aprobado no se repite."):
         request_run(0)
     if hold:
-        c2.info(f"«{hold['nombre']}» espera tu visto bueno.")
+        c2.info(f"«{hold['nombre']}» espera tu visto bueno.", icon=":material/front_hand:")
     elif not P.get("info") and not started:
-        c2.caption("Aún no hay información: los especialistas buscarán en la web lo básico y trabajarán con supuestos. "
-                   "Mejor añade datos o lanza la investigación inicial en «Información».")
+        c2.caption("Aún no hay información: los especialistas trabajarán con supuestos. "
+                   "Mejor añade datos en «Información» (Yahoo Finance es gratis).")
 
-    left, right = st.columns([1, 2.4], gap="large")
+    ids = [d["id"] for d in chain_]
+    if ss.get("sel") not in ids:
+        ss.sel = next((d["id"] for d in chain_ if E.agent(P, d["id"])["status"] != "approved"), ids[0])
+
+    left, right = st.columns([1, 2.6], gap="large")
     with left:
-        ids = [d["id"] for d in chain_]
-        if ss.get("sel") not in ids:
-            ss.sel = next((d["id"] for d in chain_ if E.agent(P, d["id"])["status"] != "approved"), ids[0])
-        st.radio("Especialistas", ids, key="sel", label_visibility="collapsed",
-                 format_func=lambda i: f"{STATUS[E.agent(P, i)['status']][1]} {ids.index(i) + 1}. {E.def_of(i, customs)['nombre']}")
-        with st.expander("Log de actividad"):
+        st.markdown("**Especialistas**", help="Pasa el cursor sobre cada uno para ver qué hace. Púlsalo para ver su trabajo.")
+        with st.container(key="agent_list"):
+            for i, d in enumerate(chain_):
+                stt = E.agent(P, d["id"])["status"]
+                st.button(f"{STATUS[stt][1]} {i + 1} · {d['nombre']}", key=f"pick_{d['id']}", use_container_width=True,
+                          type="primary" if d["id"] == ss.sel else "secondary",
+                          help=f"**{icono(d)} {d['nombre']}**\n\n{resumen(d)}\n\nEstado: {STATUS[stt][0]}",
+                          on_click=lambda aid=d["id"]: ss.update(sel=aid))
+        with st.expander("Actividad de toda la cadena", icon=":material/history:"):
             for e in reversed(P.get("log", [])[-60:]):
-                st.caption(f"`{e['t']}` **[{e['tag']}]** {md(e['msg'])}")
+                st.caption(f"`{e['t']}` **{e['tag']}** · {md(e['msg'])}")
     with right:
         agent_detail(chain_, ids.index(ss.sel))
 
@@ -316,57 +401,123 @@ def page_chain() -> None:
 def agent_detail(chain_: list[dict], idx: int) -> None:
     d = chain_[idx]
     s = E.agent(P, d["id"])
-    label, dot = STATUS[s["status"]]
-    st.caption(f"Especialista {idx + 1} · {d['grupo']}")
-    st.subheader(d["nombre"])
-    st.markdown(f"{dot} **{label}**" + (f" · Supervisor: **{s['score']}/10**" if s.get("score") is not None else "")
-                + (f" · Rechazos: {s['attempts']}/{E.MAX_ATTEMPTS}" if s.get("attempts") else ""))
-    with st.expander("Tarea y criterios de revisión"):
-        st.markdown(d["tarea"])
-        st.markdown("\n".join(f"- {c}" for c in d.get("criterios", [])))
-        n = len(memoria.get(d["id"], []))
-        if n:
-            st.caption(f"Aplica {n} lecciones aprendidas.")
+    with st.container(border=True):
+        st.subheader(f"{icono(d)} {d['nombre']}", help=resumen(d), anchor=False)
+        meta = [f"Especialista {idx + 1} de {len(chain_)}", d["grupo"]]
+        if s.get("score") is not None:
+            meta.append(f"Supervisor: {s['score']}/10")
+        if s.get("attempts"):
+            meta.append(f"Rechazos: {s['attempts']} de {E.MAX_ATTEMPTS}")
+        st.markdown(f"{badge(s['status'])} &nbsp; <span class='maps-meta'>{' · '.join(meta)}</span>", unsafe_allow_html=True)
+        st.markdown(f"*{resumen(d)}*")
 
-    if s["status"] == "error":
-        st.error(s.get("error") or "Algo falló.")
-    if s["status"] == "blocked":
-        st.warning(f"El Supervisor ha rechazado este trabajo {E.MAX_ATTEMPTS} veces. Da una orientación concreta y reintenta, o edita el output a mano.")
-    if s["status"] == "stale":
-        st.info("Desactualizado: ha cambiado algo anterior en la cadena o la información. Se rehará al pulsar Continuar.")
-    if s.get("sup_feedback"):
-        (st.success if s["sup_verdict"] == "aprobar" else st.warning)(f"**Supervisor:** {md(s['sup_feedback'])}")
-    if s.get("human_feedback"):
-        st.info(f"**Tus indicaciones:** {md(s['human_feedback'])}")
+        if s["status"] == "error":
+            st.error(s.get("error") or "Algo falló.", icon=":material/error:")
+        if s["status"] == "blocked":
+            st.warning(f"El Supervisor ha rechazado este trabajo {E.MAX_ATTEMPTS} veces. Da una orientación concreta y reintenta, "
+                       "o edita el resultado a mano.", icon=":material/block:")
+        if s["status"] == "stale":
+            st.info("Desactualizado: ha cambiado algo anterior en la cadena o la información. Se rehará al pulsar Continuar.",
+                    icon=":material/update:")
+        if s.get("sup_feedback"):
+            (st.success if s["sup_verdict"] == "aprobar" else st.warning)(
+                f"**Supervisor:** {md(s['sup_feedback'])}", icon=":material/verified:" if s["sup_verdict"] == "aprobar" else ":material/rule:")
+        if s.get("human_feedback"):
+            st.info(f"**Tus indicaciones:** {md(s['human_feedback'])}", icon=":material/person:")
 
-    if s["output"]:
-        with st.container(border=True):
-            st.markdown(md(s["output"]))
-        if s.get("fuentes"):
-            with st.expander(f"Fuentes web ({len(s['fuentes'])})"):
-                for f in s["fuentes"]:
-                    st.markdown(f"- [{f['titulo']}]({f['url']})")
-    else:
+        # Acciones principales
         prev_ok = all(E.agent(P, x["id"])["status"] == "approved" for x in chain_[:idx])
-        st.caption("Listo para trabajar." if prev_ok else "Esperando el Testigo de los especialistas anteriores.")
+        cols = st.columns(3)
+        if s["status"] == "hold" and cols[0].button("Dar visto bueno y continuar", type="primary", icon=":material/check:"):
+            s.update(status="approved", human_feedback="")
+            E.add_log(P, "CEO", f"Visto bueno a [{d['nombre']}].")
+            save()
+            request_run(0)
+        if s["status"] == "error" and cols[0].button("Reintentar", type="primary", icon=":material/refresh:", disabled=not ctx):
+            s["status"] = "stale" if s["output"] else "pending"
+            save()
+            request_run(idx)
+        if s["status"] in ("stale", "pending") and idx > 0 and prev_ok and cols[1].button(
+                "Ejecutar desde aquí", icon=":material/play_arrow:", disabled=not ctx):
+            request_run(idx)
 
-    # Acciones
-    cols = st.columns(3)
-    if s["status"] == "hold" and cols[0].button("✅ Dar visto bueno y continuar", type="primary"):
-        s.update(status="approved", human_feedback="")
-        E.add_log(P, "CEO", f"Visto bueno a [{d['nombre']}].")
-        save()
-        request_run(0)
-    if s["status"] == "error" and cols[0].button("↻ Reintentar", type="primary", disabled=not ctx):
-        s["status"] = "stale" if s["output"] else "pending"
-        save()
-        request_run(idx)
-    prev_ok = all(E.agent(P, x["id"])["status"] == "approved" for x in chain_[:idx])
-    if s["status"] in ("stale", "pending") and idx > 0 and prev_ok and cols[1].button("▶ Ejecutar desde aquí", disabled=not ctx):
-        request_run(idx)
+    tabs = st.tabs([":material/description: Análisis", ":material/psychology: Cómo lo ha decidido",
+                    ":material/history: Actividad", ":material/info: Qué hace"])
+
+    with tabs[0]:
+        if s["output"]:
+            body = E.without_sections(s["output"], ["Cómo lo he decidido", "Conclusión clave", "Datos que faltan"])
+            conclusion = E.section(s["output"], "Conclusión clave")
+            faltan = E.section(s["output"], "Datos que faltan")
+            if conclusion:
+                st.success(f"**Conclusión clave**\n\n{md(conclusion)}", icon=":material/flag:")
+            st.markdown(md(body))
+            if faltan and not faltan.lower().startswith("ninguno"):
+                with st.expander("Datos que le faltan", icon=":material/help:"):
+                    st.markdown(md(faltan))
+            if s.get("fuentes"):
+                with st.expander(f"Fuentes web ({len(s['fuentes'])})", icon=":material/link:"):
+                    for f in s["fuentes"]:
+                        st.markdown(f"- [{f['titulo']}]({f['url']})")
+        else:
+            st.caption("Todavía no ha trabajado. " + ("Está listo: pulsa Ejecutar o Continuar." if prev_ok
+                                                      else "Espera el trabajo de los especialistas anteriores."))
+
+    with tabs[1]:
+        decision = E.section(s["output"], "Cómo lo he decidido") if s["output"] else ""
+        if decision:
+            st.markdown("##### Sus decisiones, explicadas por él mismo")
+            st.markdown(md(decision))
+        elif s["output"]:
+            st.caption("Este trabajo se hizo antes de que existiera esta sección. Se generará la próxima vez que trabaje.")
+        else:
+            st.caption("Aquí verás qué decisiones ha tomado, qué ha descartado y por qué, cuando trabaje.")
+        if s.get("pensamiento"):
+            with st.expander("Resumen de su razonamiento interno", icon=":material/psychology:"):
+                st.caption("Resumen que genera el propio modelo de lo que pensó antes de escribir.")
+                st.markdown(md(s["pensamiento"]))
+        elif s["output"] and s.get("modelo", ss.model) in LEGACY_MODELS:
+            st.caption("Haiku 4.5 no genera razonamiento interno. Para verlo, usa Sonnet 5 u Opus 5 (más caros).")
+        if s.get("last_rejected"):
+            st.markdown("##### Por qué se rechazó el intento anterior")
+            st.markdown(md(s["last_rejected"]["feedback"]))
+
+    with tabs[2]:
+        hist = s.get("historial", [])
+        if hist:
+            st.markdown("##### Revisiones del Supervisor")
+            for h in reversed(hist):
+                ok = h["veredicto"] == "aprobar"
+                st.markdown(f"{'✅' if ok else '❌'} **Intento {h['intento']} · {'aprobado' if ok else 'rechazado'} "
+                            f"({h['puntuacion']}/10)** · {h['fecha']}  \n{md(h['feedback'])}")
+        if s.get("busquedas"):
+            st.markdown("##### Búsquedas web que hizo")
+            st.markdown("\n".join(f"- {md(q)}" for q in s["busquedas"]))
+        tag = f"[{d['nombre']}]"
+        entries = [e for e in P.get("log", []) if tag in e["msg"]]
+        st.markdown("##### Registro")
+        if entries:
+            for e in reversed(entries[-25:]):
+                st.caption(f"`{e['t']}` **{e['tag']}** · {md(e['msg'].replace(tag, '').strip())}")
+        else:
+            st.caption("Sin actividad todavía.")
+
+    with tabs[3]:
+        st.markdown(f"**En pocas palabras:** {resumen(d)}")
+        st.markdown("**Su tarea**")
+        st.markdown(md(d["tarea"]))
+        st.markdown("**Qué comprueba el Supervisor**")
+        st.markdown("\n".join(f"- {c}" for c in d.get("criterios", [])))
+        if d.get("guia"):
+            with st.expander("Guía metodológica que sigue", icon=":material/menu_book:"):
+                st.markdown(md(d["guia"]))
+        ls = memoria.get(d["id"], [])
+        if ls:
+            with st.expander(f"Lecciones aprendidas que aplica ({len(ls)})", icon=":material/school:"):
+                st.markdown("\n".join(f"- {md(l['texto'])}" for l in ls[-12:]))
 
     if s["status"] == "blocked":
-        with st.form(f"block_{d['id']}"):
+        with st.form(f"block_{d['id']}", border=True):
             note = st.text_area("Orientación para desbloquear", placeholder="Qué datos, enfoque o supuestos quieres que use…")
             if st.form_submit_button("Reintentar con esta orientación", type="primary"):
                 s.update(human_note=note.strip(), attempts=0, status="stale" if s["output"] else "pending")
@@ -375,7 +526,7 @@ def agent_detail(chain_: list[dict], idx: int) -> None:
                 request_run(idx)
 
     if s["output"] and s["status"] in ("approved", "hold", "stale", "blocked"):
-        with st.expander("✋ Rechazar con indicaciones"):
+        with st.expander("Rechazar y pedir que lo rehaga", icon=":material/undo:"):
             with st.form(f"fb_{d['id']}"):
                 fb = st.text_area("Qué debe corregir o tener en cuenta",
                                   placeholder="Ej.: usa Ke con prima país; el EBITDA 2024 incluye 0,4 M€ no recurrentes…")
@@ -390,7 +541,7 @@ def agent_detail(chain_: list[dict], idx: int) -> None:
                     save()
                     request_run(idx)
 
-    with st.expander("✏️ Editar output a mano"):
+    with st.expander("Editar el resultado a mano", icon=":material/edit:"):
         with st.form(f"ed_{d['id']}"):
             txt = st.text_area("Output (markdown)", s["output"], height=400)
             st.caption("Al guardar queda aprobado y los especialistas posteriores quedan desactualizados.")
@@ -415,6 +566,18 @@ def after_new_info(doc: dict) -> None:
         return
     if r:
         ss.route = {**r, "cid": P["id"]}
+
+
+def add_yahoo(p: dict, ticker: str, comps: list[str]) -> dict:
+    """Añade a la empresa los datos de Yahoo Finance del ticker y de los comparables. Devuelve el último documento."""
+    doc = None
+    if ticker.strip():
+        titulo, texto = market.company(ticker, p.get("tipo") == "financiera")
+        doc = E.add_info(None, p, titulo, texto, "yahoo")
+    if comps:
+        titulo, texto = market.comparables(comps)
+        doc = E.add_info(None, p, titulo, texto, "yahoo")
+    return doc
 
 
 def run_research(box, kind: str, query: str | None) -> None:
@@ -463,6 +626,30 @@ def page_info() -> None:
         return
     left, right = st.columns([1.1, 1], gap="large")
     with left:
+        with st.container(border=True):
+            st.markdown("#### 📈 Yahoo Finance (gratis)")
+            st.caption("Cotización, múltiplos, consenso de analistas y cuentas anuales de los últimos 4 años. No gasta API.")
+            with st.form("yahoo_form"):
+                c1, c2 = st.columns([1, 2])
+                tk = c1.text_input("Ticker", P.get("ticker", ""), placeholder="ITX.MC")
+                comps = c2.text_input("Comparables (opcional, separados por comas)", placeholder="HM-B.ST, GAP, ABF.L")
+                go_y = st.form_submit_button("Descargar datos")
+            if go_y:
+                if not tk.strip() and not comps.strip():
+                    st.warning("Escribe un ticker o algún comparable.")
+                else:
+                    try:
+                        with st.spinner("Descargando de Yahoo Finance…"):
+                            doc = add_yahoo(P, tk, [c for c in comps.split(",") if c.strip()])
+                        save()
+                        after_new_info(doc)
+                        save()
+                        flash("success", "Datos de Yahoo Finance añadidos.")
+                        st.rerun()
+                    except E.MapsError as e:
+                        save()
+                        st.error(str(e))
+
         with st.container(border=True):
             st.markdown("#### 🔎 Investigación web")
             st.caption("Claude busca datos públicos (resultados, cotización, comparables, transacciones, tipos) y los guarda con sus fuentes.")
@@ -524,7 +711,7 @@ def page_info() -> None:
         if not P.get("info"):
             st.caption("Todavía no hay documentos.")
         for d in reversed(P.get("info", [])):
-            icon = {"web": "🌐", "archivo": "📎"}.get(d.get("origen"), "✍️")
+            icon = {"web": "🌐", "archivo": "📎", "yahoo": "📈"}.get(d.get("origen"), "✍️")
             with st.expander(f"{icon} {d['titulo']} · {d.get('fecha', '')}"):
                 if d.get("resumen"):
                     st.caption("Extracto que usan los especialistas:")
@@ -684,7 +871,7 @@ def page_config() -> None:
                 gc = st.columns(3)
                 for i, d in enumerate(defs):
                     on = gc[i % 3].checkbox(d["nombre"], d.get("fixed") or d["id"] in P.get("modulos", []), disabled=bool(d.get("fixed")),
-                                            key=f"mod_{P['id']}_{P.get('mods_v', 0)}_{d['id']}", help=d["tarea"])
+                                            key=f"mod_{P['id']}_{P.get('mods_v', 0)}_{d['id']}", help=f"{resumen(d)}\n\n{d['tarea']}")
                     if on and not d.get("fixed"):
                         sel.append(d["id"])
             st.caption("Al añadir un módulo, los especialistas posteriores ya aprobados pasan a «Desactualizado» para integrar su trabajo.")
@@ -750,7 +937,7 @@ if ss.page == "nueva" or not P:
 else:
     if "goto" in ss:
         ss.nav_radio = ss.pop("goto")
-    st.markdown(f"## {P['nombre']}")
+    st.title(P["nombre"], anchor=False)
     st.caption(" · ".join(x for x in [TIPOS.get(P.get("tipo", "empresa")), P.get("sector"), P.get("ticker"), P.get("proposito")] if x))
     st.radio("Sección", NAV, key="nav_radio", horizontal=True, label_visibility="collapsed")
     {"Cadena": page_chain, "Información": page_info, "Informe": page_report,

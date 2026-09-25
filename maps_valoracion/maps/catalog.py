@@ -112,3 +112,9 @@ MODELS = {
 LEGACY_MODELS = {"claude-haiku-4-5"}
 WEB_SEARCH_PRICE = 0.01
 EFFORTS = {"low": "Baja (más barata)", "medium": "Media", "high": "Alta (recomendada)", "xhigh": "Muy alta", "max": "Máxima"}
+
+# Icono, descripción corta (tooltip) y guía metodológica de cada especialista.
+from .guias import AYUDA  # noqa: E402
+
+for _c in CATALOG:
+    _c.update(AYUDA.get(_c["id"], {}))

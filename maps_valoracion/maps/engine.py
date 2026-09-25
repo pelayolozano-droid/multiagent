@@ -68,6 +68,19 @@ def section(text: str, name: str) -> str:
     return (rest[: n.start()] if n else rest).strip()
 
 
+def without_sections(text: str, names: list[str]) -> str:
+    """El texto sin las secciones indicadas (para mostrarlas aparte en la interfaz)."""
+    out = text or ""
+    for name in names:
+        m = re.search(rf"^#{{1,4}}\s*{re.escape(name)}\s*$", out, re.I | re.M)
+        if not m:
+            continue
+        rest = out[m.end():]
+        n = re.search(r"^#{1,2}\s+\S", rest, re.M)
+        out = out[: m.start()] + (rest[n.start():] if n else "")
+    return out.strip()
+
+
 def missing_by_agent(p: dict, customs: list[dict]) -> list[tuple[str, str]]:
     out = []
     for d in chain(p, customs):
@@ -112,6 +125,8 @@ class CallResult:
     searches: int = 0
     cost: float = 0.0
     truncated: bool = False
+    thinking: str = ""
+    queries: list[str] = field(default_factory=list)
 
 
 def _cost(model: str, usage) -> float:
@@ -129,7 +144,7 @@ def _model_kwargs(s: Settings, max_tokens: int) -> dict:
     """Parámetros según el modelo: Haiku 4.5 va sin razonamiento, sin esfuerzo y sin fallbacks."""
     if s.model in LEGACY_MODELS:
         return dict(model=s.model, max_tokens=min(max_tokens, 16000))
-    return dict(model=s.model, max_tokens=max_tokens, thinking={"type": "adaptive"},
+    return dict(model=s.model, max_tokens=max_tokens, thinking={"type": "adaptive", "display": "summarized"},
                 output_config={"effort": s.effort}, betas=[FALLBACK_BETA], fallbacks="default")
 
 
@@ -155,12 +170,13 @@ def _api_error(e: Exception) -> MapsError:
 
 
 def call_stream(client: anthropic.Anthropic, s: Settings, *, system: str, content: list[dict],
-                web_uses: int = 0, on_text=None, on_search=None) -> CallResult:
+                web_uses: int = 0, on_text=None, on_search=None, on_thinking=None) -> CallResult:
     """Llamada en streaming. Con web_uses>0 Claude puede buscar en internet.
-    Devuelve solo el texto escrito tras la última búsqueda (el análisis final)."""
+    Devuelve solo el texto escrito tras la última búsqueda (el análisis final) y el resumen del razonamiento."""
     messages: list[dict] = [{"role": "user", "content": content}]
     res = CallResult(text="")
     answer: list[str] = []
+    thinking: list[str] = []
     sources: dict[str, str] = {}
     try:
         for _ in range(8):  # continuaciones por pause_turn
@@ -178,9 +194,15 @@ def call_stream(client: anthropic.Anthropic, s: Settings, *, system: str, conten
                         answer.append(ev.delta.text)
                         if on_text:
                             on_text("".join(answer))
+                    elif ev.type == "content_block_delta" and ev.delta.type == "thinking_delta":
+                        thinking.append(ev.delta.thinking)
+                        if on_thinking:
+                            on_thinking("".join(thinking))
                 msg = stream.get_final_message()
             res.cost += _cost(s.model, msg.usage)
             for b in msg.content:
+                if b.type == "server_tool_use" and isinstance(getattr(b, "input", None), dict) and b.input.get("query"):
+                    res.queries.append(b.input["query"])
                 if b.type == "web_search_tool_result" and isinstance(b.content, list):
                     for r in b.content:
                         url = getattr(r, "url", None)
@@ -201,6 +223,7 @@ def call_stream(client: anthropic.Anthropic, s: Settings, *, system: str, conten
     except anthropic.APIError as e:
         raise _api_error(e) from e
     res.text = "".join(answer).strip()
+    res.thinking = "".join(thinking).strip()
     res.sources = [{"url": u, "titulo": t} for u, t in sources.items()]
     if not res.text:
         raise MapsError("Claude no devolvió texto. Reintenta.")
@@ -260,13 +283,21 @@ class Football(BaseModel):
 
 SYSTEM = """Eres un especialista dentro de MAPS, un sistema multi-agente de valoración de empresas. Trabajáis en cadena: cada especialista recibe el trabajo ya aprobado de los anteriores (el Testigo), produce su parte y un Supervisor la revisa.
 
-Reglas:
-- Usa la información aportada y el Testigo. Si recurres a conocimiento general (primas de riesgo habituales, múltiplos sectoriales típicos…), márcalo con [SUPUESTO] y explica el orden de magnitud. Nunca inventes cifras de la empresa.
-- Si tienes búsqueda web, úsala solo para datos concretos que falten o estén desactualizados, y cita la fuente y la fecha de cada cifra obtenida. No narres las búsquedas: escribe solo el análisis final.
-- Muestra los cálculos en tablas markdown, con unidad y moneda en cada cifra.
-- Sé concreto y denso: unas 900-1200 palabras como máximo.
-- Sé coherente con el Testigo; si discrepas de un especialista anterior, dilo y cuantifica el efecto.
-- Termina SIEMPRE con estas dos secciones exactas:
+Reglas de datos:
+- Prioridad de las fuentes: 1) información aportada (documentos del CEO, datos de Yahoo Finance, investigación web); 2) el Testigo; 3) conocimiento general. Si usas conocimiento general (primas de riesgo, múltiplos sectoriales típicos…), márcalo con [SUPUESTO] y explica el orden de magnitud.
+- Nunca inventes cifras de la empresa, transacciones ni comparables concretos. Si no tienes un dato, usa un supuesto marcado y pídelo en «Datos que faltan».
+- Si tienes búsqueda web, úsala solo para datos concretos que falten o estén desactualizados, y cita la fuente y la fecha de cada cifra. No narres las búsquedas.
+
+Reglas de cálculo:
+- Importes en millones (M) con 1 decimal y la moneda de la valoración; valores por acción con 2 decimales. Indica siempre unidad y moneda.
+- Distingue siempre valor de empresa (EV) y valor del equity, y sé coherente con IFRS 16 (arrendamientos) de principio a fin.
+- Muestra los cálculos en tablas markdown con las fórmulas o pasos, para que se puedan verificar. Revisa sumas, porcentajes y descuentos antes de escribirlos.
+- Sé coherente con el Testigo. Si discrepas de un especialista anterior, dilo, explica por qué y cuantifica el efecto.
+
+Formato:
+- Concreto y denso: 900-1200 palabras como máximo. Primero el análisis y después, SIEMPRE, estas tres secciones exactas, en este orden:
+## Cómo lo he decidido
+(3-6 viñetas en lenguaje claro para alguien no experto: qué decisiones clave has tomado, qué alternativas has descartado y por qué, qué datos has usado y de dónde, y cuál es tu principal incertidumbre)
 ## Conclusión clave
 (2-5 líneas con las cifras que necesita el siguiente especialista)
 ## Datos que faltan
@@ -322,8 +353,10 @@ def build_content(p: dict, customs: list[dict], memoria: dict, d: dict) -> list[
     """Bloque 1 (empresa + información) con caché: es idéntico para todos los especialistas de la cadena."""
     s = agent(p, d["id"])
     shared = f"{empresa_header(p)}\n\nINFORMACIÓN APORTADA:\n{info_block(p)}"
-    task = (f'Eres "{d["nombre"]}".\n\nTU TAREA:\n{d["tarea"]}\n\nCRITERIOS CON LOS QUE TE EVALUARÁ EL SUPERVISOR:\n'
-            + "\n".join(f"- {c}" for c in d.get("criterios", [])))
+    task = f'Eres "{d["nombre"]}".\n\nTU TAREA:\n{d["tarea"]}'
+    if d.get("guia"):
+        task += f"\n\nGUÍA METODOLÓGICA (síguela, adaptándola a esta empresa):\n{d['guia']}"
+    task += "\n\nCRITERIOS CON LOS QUE TE EVALUARÁ EL SUPERVISOR:\n" + "\n".join(f"- {c}" for c in d.get("criterios", []))
     lessons = memoria.get(d["id"], [])[-12:]
     if lessons:
         task += "\n\nLECCIONES APRENDIDAS EN VALORACIONES ANTERIORES (aplícalas):\n" + "\n".join(f"- {l['texto']}" for l in lessons)
@@ -365,7 +398,7 @@ OUTPUT A REVISAR:
 {out[:40000]}
 \"\"\"
 
-Aprueba si cumple razonablemente la tarea y los criterios. Rechaza SOLO por problemas materiales: errores de cálculo, incoherencia no justificada con las conclusiones anteriores, cifras de la empresa inventadas sin fuente ni marca [SUPUESTO], ausencia de las secciones "Conclusión clave" o "Datos que faltan", o no hacer la tarea. La falta de datos NO es motivo de rechazo si se declara y se usan supuestos razonables.
+Aprueba si cumple razonablemente la tarea y los criterios. Rechaza SOLO por problemas materiales: errores de cálculo, incoherencia no justificada con las conclusiones anteriores, cifras de la empresa inventadas sin fuente ni marca [SUPUESTO], ausencia de las secciones "Cómo lo he decidido", "Conclusión clave" o "Datos que faltan", o no hacer la tarea. La falta de datos NO es motivo de rechazo si se declara y se usan supuestos razonables.
 
 - puntuacion: 0-10.
 - feedback: máximo 3 frases concretas.
@@ -379,6 +412,7 @@ class Hooks:
     def agent_start(self, d, attempt): ...
     def text(self, d, text): ...
     def search(self, d, n): ...
+    def thinking(self, d, text): ...
     def reviewing(self, d): ...
     def verdict(self, d, s): ...
     def save(self): ...
@@ -423,7 +457,8 @@ def run_agent(ctx: Ctx, p: dict, d: dict, hooks: Hooks) -> str:
         hooks.agent_start(d, s["attempts"])
         try:
             r = call_stream(ctx.client, ctx.settings, system=SYSTEM, content=build_content(p, ctx.customs, ctx.memoria, d),
-                            web_uses=web, on_text=lambda t: hooks.text(d, t), on_search=lambda n: hooks.search(d, n))
+                            web_uses=web, on_text=lambda t: hooks.text(d, t), on_search=lambda n: hooks.search(d, n),
+                            on_thinking=lambda t: hooks.thinking(d, t))
         except MapsError as e:
             s.update(status="error", error=str(e))
             add_log(p, "ERR", f"[{d['nombre']}] {e}", "rej")
@@ -432,6 +467,9 @@ def run_agent(ctx: Ctx, p: dict, d: dict, hooks: Hooks) -> str:
         p["coste"] = p.get("coste", 0) + r.cost
         s["output"] = r.text + ("\n\n> ⚠️ Respuesta cortada por longitud." if r.truncated else "")
         s["fuentes"] = r.sources
+        s["pensamiento"] = r.thinking[-8000:]
+        s["busquedas"] = r.queries
+        s["modelo"] = ctx.settings.model
         s["status"] = "reviewing"
         add_log(p, "ESP", f"[{d['nombre']}] output enviado al SUPERVISOR" + (f" ({r.searches} búsquedas web)" if r.searches else "") + ".", "esp")
         hooks.save()
@@ -445,6 +483,9 @@ def run_agent(ctx: Ctx, p: dict, d: dict, hooks: Hooks) -> str:
             return "error"
         p["coste"] = p.get("coste", 0) + cost
         s.update(score=max(0, min(10, v.puntuacion)), sup_feedback=v.feedback, sup_verdict=v.veredicto)
+        s.setdefault("historial", []).append({"fecha": f"{today()} {now_t()}", "intento": s["attempts"] + 1,
+                                              "veredicto": v.veredicto, "puntuacion": s["score"], "feedback": v.feedback})
+        s["historial"] = s["historial"][-10:]
         if v.veredicto == "aprobar":
             s.update(last_rejected=None, human_note="")
             if p.get("revision"):

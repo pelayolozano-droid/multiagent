@@ -26,12 +26,19 @@ python -m venv .venv
 
 1. **Crea la empresa.** Elige una plantilla: Pyme no cotizada, Cotizada, M&A venta/compra, Banca / seguros o Completa. Si dejas marcada "Investigar en la web", Claude busca los datos públicos al crearla (hasta 5 búsquedas).
 2. **Pestaña Información.** Aquí entra la información de tres maneras:
+   - **Yahoo Finance (gratis):** con el ticker descarga cotización, múltiplos, consenso de analistas y las cuentas anuales de los últimos 4 años. También puedes añadir tickers de comparables. No gasta API.
    - **Investigación inicial:** Claude busca resultados, cotización, comparables, transacciones y tipos de interés, y guarda cada dato con su fuente.
    - **Buscar los datos que faltan:** busca lo que los especialistas han pedido en sus secciones "Datos que faltan".
    - **A mano:** pegas texto o subes archivos (PDF, incluidos los escaneados, Excel, CSV o imágenes).
 
    Cada vez que añades información, la app detecta a qué especialistas afecta y te propone rehacer la cadena desde el primero de ellos.
-3. **Pestaña Cadena.** Pulsa **Ejecutar cadena** para ver trabajar a cada especialista en directo. Sobre cualquier especialista puedes rechazar con indicaciones, editar el output a mano o ejecutar la cadena desde ese punto.
+3. **Pestaña Cadena.** Pulsa **Ejecutar cadena** para ver trabajar a cada especialista en directo: en qué fase está (leyendo, razonando, buscando, escribiendo, en revisión) y lo que va escribiendo. Si pasas el cursor por encima de un especialista, verás qué hace. Al pulsarlo se abre su ficha con cuatro pestañas:
+   - **Análisis:** su trabajo, con la conclusión clave destacada.
+   - **Cómo lo ha decidido:** sus decisiones explicadas en lenguaje claro. Con Sonnet u Opus aparece también el resumen de su razonamiento interno.
+   - **Actividad:** las revisiones del Supervisor, las búsquedas web que hizo y su registro.
+   - **Qué hace:** su tarea, los criterios del Supervisor, la guía metodológica que sigue y las lecciones aprendidas que aplica.
+
+   Sobre cualquier especialista puedes rechazar con indicaciones, editar el resultado a mano o ejecutar la cadena desde ese punto.
 4. **Pestaña Informe.** Muestra el football field, el rango de valor, el valor por acción y el potencial frente a la cotización. También puedes descargar el informe completo en `.md`.
 5. **Pestaña Memoria.** Guarda las lecciones que ha aprendido cada especialista, tanto las del Supervisor como las tuyas. Se aplican en todas las valoraciones siguientes.
 
@@ -40,8 +47,10 @@ python -m venv .venv
 | Archivo | Contenido |
 |---|---|
 | `app.py` | Interfaz de Streamlit |
+| `maps/guias.py` | Guía metodológica y descripción corta de cada especialista |
 | `maps/catalog.py` | Los 19 especialistas (tarea y criterios del Supervisor), las plantillas y los precios |
 | `maps/engine.py` | Prompts, llamadas a Claude con búsqueda web, el Supervisor y el bucle de la cadena |
+| `maps/market.py` | Datos de Yahoo Finance (yfinance) de la empresa y sus comparables |
 | `maps/files.py` | Lectura de PDF, Excel, CSV e imágenes |
 | `maps/storage.py` | Guardado en JSON dentro de `data/` (empresas, memoria y especialistas personalizados) |
 
