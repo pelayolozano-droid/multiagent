@@ -148,6 +148,78 @@ def company(ticker: str, financiera: bool = False) -> tuple[str, str]:
     return f"Yahoo Finance: {name} ({t.ticker})", md
 
 
+# Bolsas principales primero; las cotizaciones secundarias (OTC, bolsas regionales alemanas, CDR…) al final.
+_BOLSAS_PRINCIPALES = ("Madrid", "NYSE", "NASDAQ", "Nasdaq", "Paris", "XETRA", "London", "Milan", "Amsterdam", "Lisbon",
+                       "Brussels", "Swiss", "Toronto", "Tokyo", "Hong Kong", "Stockholm", "Copenhagen", "Oslo", "Helsinki")
+_SECUNDARIO = ("CDR", "SPONSORED", "ADR", "FUTURES")
+# Empresas que la búsqueda de Yahoo no devuelve en su bolsa principal.
+_ALIAS = {"inditex": "ITX.MC", "zara": "ITX.MC"}
+PAISES = {"Spain": "España", "United States": "Estados Unidos", "France": "Francia", "Germany": "Alemania",
+          "United Kingdom": "Reino Unido", "Italy": "Italia", "Netherlands": "Países Bajos", "Portugal": "Portugal",
+          "Switzerland": "Suiza", "Mexico": "México", "Brazil": "Brasil", "Japan": "Japón", "China": "China"}
+
+
+def search(query: str, n: int = 6) -> list[dict]:
+    """Empresas cotizadas que coinciden con el nombre, con la bolsa principal primero."""
+    q = query.strip()
+    if not q:
+        return []
+    try:
+        quotes = yf.Search(q, max_results=20, news_count=0).quotes
+    except Exception as e:
+        raise MapsError(f"No se pudo buscar en Yahoo Finance: {e}") from e
+    res = [{"symbol": x["symbol"], "nombre": x.get("longname") or x.get("shortname") or x["symbol"], "bolsa": x.get("exchDisp", ""),
+            "corto": (x.get("shortname") or "").upper()}
+           for x in quotes if x.get("quoteType") == "EQUITY" and x.get("symbol")]
+    alias = _ALIAS.get(q.lower())
+    if alias and all(r["symbol"] != alias for r in res):
+        res.insert(0, {"symbol": alias, "nombre": q.title(), "bolsa": "Madrid"})
+
+    def clave(r):  # dos primeras palabras del nombre, para reconocer la misma empresa en varias bolsas
+        return " ".join("".join(ch for ch in r["nombre"].upper() if ch.isalnum() or ch == " ").split()[:2])
+
+    def principal(r):
+        nombres = r["nombre"].upper() + " " + r.get("corto", "")
+        return any(b in r["bolsa"] for b in _BOLSAS_PRINCIPALES) and not any(s in nombres for s in _SECUNDARIO)
+
+    us = ("NYSE", "NASDAQ", "Nasdaq")
+    locales = {clave(r) for r in res if principal(r) and not any(b in r["bolsa"] for b in us)}
+
+    def score(r):
+        # Una empresa extranjera cotiza en EE. UU. como ADR: su bolsa local va primero.
+        adr = any(b in r["bolsa"] for b in us) and clave(r) in locales
+        parecido = r["symbol"].split(".")[0].startswith(q[:4].upper())
+        return (0 if principal(r) else 1, 1 if adr else 0, 0 if parecido else 1)
+    return sorted(res, key=score)[:n]
+
+
+def profile(ticker: str) -> dict:
+    """Ficha básica para rellenar la empresa automáticamente."""
+    t = yf.Ticker(ticker.strip().upper())
+    i = _info(t)
+    industria = i.get("industry") or ""
+    return {"symbol": t.ticker, "nombre": i.get("longName") or i.get("shortName"), "sector": i.get("sector") or "",
+            "industria": industria, "industry_key": i.get("industryKey") or "",
+            "pais": PAISES.get(i.get("country") or "", i.get("country") or ""),
+            "moneda": i.get("financialCurrency") or i.get("currency") or "", "moneda_cotiz": i.get("currency") or "",
+            "precio": i.get("currentPrice") or i.get("regularMarketPrice"), "capitalizacion": i.get("marketCap"),
+            "financiera": industria.startswith(("Banks", "Insurance")),
+            "descripcion": (i.get("longBusinessSummary") or "")[:600]}
+
+
+def peers(industry_key: str, exclude: str, n: int = 5) -> list[str]:
+    """Principales empresas cotizadas de la misma industria según Yahoo (sirven de comparables orientativos)."""
+    if not industry_key:
+        return []
+    try:
+        df = yf.Industry(industry_key).top_companies
+    except Exception:
+        return []
+    if df is None or df.empty:
+        return []
+    return [s for s in df.index.tolist() if s and s.upper() != exclude.upper()][:n]
+
+
 def comparables(tickers: list[str]) -> tuple[str, str]:
     """Tabla de múltiplos de un grupo de comparables cotizados."""
     lines, fails = [], []

@@ -1,4 +1,4 @@
-# MAPS Valoración
+# Valoris · Análisis y valoración de empresas
 
 Sistema multi-agente para valorar empresas con Claude. Tú haces de **CEO**: defines la empresa y aportas información. Una cadena de **especialistas** hace el trabajo y cada uno le pasa el suyo (el "Testigo") al siguiente. Un **Supervisor** revisa cada entrega y puede pedir que se rehaga una vez; si vuelve a fallar, te pide que intervengas.
 
@@ -24,7 +24,10 @@ python -m venv .venv
 
 ## Cómo se usa
 
-1. **Crea la empresa.** Elige una plantilla: Pyme no cotizada, Cotizada, M&A venta/compra, Banca / seguros o Completa. Si dejas marcada "Investigar en la web", Claude busca los datos públicos al crearla (hasta 5 búsquedas).
+1. **Nuevo informe.**
+   - **La empresa:** escribe su nombre y la app busca el ticker en Yahoo Finance. Si no aparece, puedes escribirlo a mano o marcar que no cotiza.
+   - **El trabajo:** elige qué quieres obtener: informe de situación, valoración rápida, valoración completa, «¿Comprar la acción?» o compra/venta de la empresa.
+   - **Generar informe:** descarga gratis los datos de la empresa y de sus comparables, y los especialistas se ponen a trabajar.
 2. **Pestaña Información.** Aquí entra la información de tres maneras:
    - **Yahoo Finance (gratis):** con el ticker descarga cotización, múltiplos, consenso de analistas y las cuentas anuales de los últimos 4 años. También puedes añadir tickers de comparables. No gasta API.
    - **Investigación inicial:** Claude busca resultados, cotización, comparables, transacciones y tipos de interés, y guarda cada dato con su fuente.

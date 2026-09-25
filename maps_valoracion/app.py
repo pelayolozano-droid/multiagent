@@ -1,9 +1,10 @@
-"""MAPS Valoración — sistema multi-agente de valoración de empresas (Streamlit).
+"""Valoris — sistema multi-agente de valoración de empresas (Streamlit).
 
 Ejecutar:  .venv\\Scripts\\streamlit run app.py
 """
 from __future__ import annotations
 
+import html
 import os
 import time
 
@@ -13,33 +14,54 @@ import streamlit as st
 
 from maps import engine as E
 from maps import market, storage
-from maps.catalog import CATALOG, EFFORTS, GROUPS, LEGACY_MODELS, MODELS, PRESETS, PROPOSITOS, STATUS, TIPOS
+from maps.catalog import CATALOG, EFFORTS, GROUPS, LEGACY_MODELS, MODELS, PRESETS, PROPOSITOS, STATUS, TIPOS, TRABAJOS, mods_for
 from maps.files import read_upload
 
-st.set_page_config(page_title="MAPS Valoración", page_icon="📊", layout="wide")
+APP_NAME = "Valoris"
+APP_TAGLINE = "Análisis y valoración de empresas"
+
+st.set_page_config(page_title=f"{APP_NAME} · {APP_TAGLINE}", page_icon=":material/query_stats:", layout="wide")
 st.markdown("""<style>
-.block-container {padding-top: 2.2rem; padding-bottom: 3rem; max-width: 1400px;}
-h1, h2, h3, h4 {letter-spacing: -0.01em;}
-[data-testid="stMetricValue"] {font-size: 1.3rem;}
-[data-testid="stMetricLabel"] p {font-size: .85rem;}
-/* Lista de especialistas: botones alineados a la izquierda, compactos */
-.st-key-agent_list [data-testid="stVerticalBlock"] {gap: .3rem;}
-.st-key-agent_list button {justify-content: flex-start; text-align: left; min-height: 2.5rem; padding: .35rem .8rem;}
-.st-key-agent_list button p {font-size: .92rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
+.block-container {padding-top: 2rem; padding-bottom: 3rem; max-width: 1360px;}
+h1, h2, h3, h4 {letter-spacing: -0.015em;}
+[data-testid="stMetricLabel"] p {font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; opacity: .75;}
+[data-testid="stMetricValue"] {font-size: 1.25rem;}
+.stAppDeployButton, #MainMenu, footer {display: none !important;}
+
+/* Marca */
+.vl-brand {display: flex; align-items: center; gap: .75rem; margin: .2rem 0 1rem;}
+.vl-logo {width: 2.3rem; height: 2.3rem; border-radius: .55rem; display: grid; place-items: center;
+  background: linear-gradient(135deg, #3B6FD8, #1F3A68); color: #fff; font-weight: 700; font-size: 1.15rem;}
+.vl-name {font-weight: 700; font-size: 1.15rem; letter-spacing: -0.01em; line-height: 1.1;}
+.vl-tag {font-size: .78rem; opacity: .7;}
+
+/* Cabecera de la empresa */
+.vl-eyebrow {font-size: .75rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; opacity: .6; margin-bottom: -.4rem;}
+.vl-chips {display: flex; flex-wrap: wrap; gap: .4rem; margin: .1rem 0 1rem;}
+.vl-chip {font-size: .8rem; padding: .15rem .6rem; border-radius: 999px; border: 1px solid rgba(100,116,139,.35); opacity: .9;}
+
+/* Lista de especialistas */
+.st-key-agent_list [data-testid="stVerticalBlock"] {gap: .25rem;}
+.st-key-agent_list button {justify-content: flex-start; text-align: left; min-height: 2.4rem; padding: .3rem .75rem;}
+.st-key-agent_list button p {font-size: .9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
+
 /* Foco visible para quien navega con teclado */
 button:focus-visible, [role="tab"]:focus-visible, [role="radio"]:focus-visible, a:focus-visible {
-  outline: 3px solid #2447D6 !important; outline-offset: 2px; }
+  outline: 3px solid #3B6FD8 !important; outline-offset: 2px;}
+
 /* Etiqueta de estado: color + texto, nunca solo color */
-.maps-badge {display: inline-flex; align-items: center; gap: .4rem; padding: .15rem .65rem; border-radius: 999px;
-  font-size: .85rem; font-weight: 600; border: 1.5px solid var(--c); line-height: 1.5;}
-.maps-badge::before {content: ""; width: .55rem; height: .55rem; border-radius: 50%; background: var(--c);}
-.maps-meta {opacity: .8; font-size: .9rem;}
+.vl-badge {display: inline-flex; align-items: center; gap: .4rem; padding: .1rem .6rem; border-radius: 999px;
+  font-size: .8rem; font-weight: 600; border: 1px solid var(--c); color: var(--c); line-height: 1.6;}
+.vl-badge::before {content: ""; width: .5rem; height: .5rem; border-radius: 50%; background: var(--c);}
+.vl-meta {opacity: .7; font-size: .85rem;}
 </style>""", unsafe_allow_html=True)
 ss = st.session_state
 for k, v in {"page": "main", "nav_radio": "Cadena", "route": None, "flash": None, "model": "claude-haiku-4-5", "effort": "low"}.items():
     ss.setdefault(k, v)
 
 NAV = ["Cadena", "Información", "Informe", "Memoria", "Configuración"]
+NAV_ICON = {"Cadena": ":material/account_tree:", "Información": ":material/folder_open:", "Informe": ":material/description:",
+            "Memoria": ":material/school:", "Configuración": ":material/settings:"}
 customs = storage.load_customs()
 memoria = storage.load_memoria()
 
@@ -60,16 +82,16 @@ def flash(kind: str, msg: str) -> None:
 
 
 # Colores de estado con contraste suficiente en tema claro y oscuro; siempre van acompañados de texto.
-STATUS_COLOR = {"pending": "#8A94A6", "active": "#2F6FEB", "reviewing": "#2F6FEB", "hold": "#D97706",
-                "approved": "#16A34A", "stale": "#CA8A04", "blocked": "#9333EA", "error": "#DC2626"}
+STATUS_COLOR = {"pending": "#64748B", "active": "#1F4FA3", "reviewing": "#1F4FA3", "hold": "#B45309",
+                "approved": "#15803D", "stale": "#A16207", "blocked": "#6D28D9", "error": "#B91C1C"}
 
 
 def badge(status: str) -> str:
-    return f'<span class="maps-badge" style="--c:{STATUS_COLOR[status]}">{STATUS[status][0]}</span>'
+    return f'<span class="vl-badge" style="--c:{STATUS_COLOR[status]}">{STATUS[status][0]}</span>'
 
 
 def icono(d: dict) -> str:
-    return d.get("icono", "🧩")
+    return d.get("icono", ":material/extension:")
 
 
 def resumen(d: dict) -> str:
@@ -101,16 +123,16 @@ COSTE_CADENA = {"claude-haiku-4-5": "~0,3-0,8 $", "claude-sonnet-5": "~1,5-4 $",
 
 companies = storage.list_companies()
 with st.sidebar:
-    st.markdown("### 📊 MAPS Valoración")
-    st.caption("Valoración de empresas con un equipo de especialistas de IA. Tú diriges como CEO.")
+    st.markdown(f'<div class="vl-brand"><div class="vl-logo">{APP_NAME[0]}</div><div><div class="vl-name">{APP_NAME}</div>'
+                f'<div class="vl-tag">{APP_TAGLINE}</div></div></div>', unsafe_allow_html=True)
     if "cid_next" in ss:
         ss.cid = ss.pop("cid_next")
     if companies:
         ids = [c["id"] for c in companies]
         if ss.get("cid") not in ids:
             ss.cid = ids[0]
-        st.selectbox("Empresa", ids, key="cid", format_func=lambda i: next(c["nombre"] for c in companies if c["id"] == i))
-    if st.button("Nueva empresa", icon=":material/add:", use_container_width=True):
+        st.selectbox("Informes", ids, key="cid", format_func=lambda i: next(c["nombre"] for c in companies if c["id"] == i))
+    if st.button("Nuevo informe", icon=":material/add:", use_container_width=True, type="primary" if not companies else "secondary"):
         ss.page = "nueva"
         st.rerun()
 
@@ -195,45 +217,156 @@ def company_fields(prefix: str, v: dict) -> dict:
     return out
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def buscar_empresas(q: str) -> list[dict]:
+    try:
+        return market.search(q)
+    except E.MapsError:
+        return []
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def ficha(symbol: str) -> dict | None:
+    try:
+        return market.profile(symbol)
+    except E.MapsError:
+        return None
+
+
+MANUAL, NO_COTIZA = "__manual", "__nocotiza"
+
+
 def page_new() -> None:
-    st.title("Nueva empresa" if companies else "Valora una empresa con una cadena de especialistas")
     if not companies:
-        st.markdown("Tú eres el **CEO**: defines la empresa y aportas información (o dejas que el investigador la busque en la web). "
-                    "Cada **especialista** (Claude) hace su parte y le pasa el Testigo al siguiente; un **Supervisor** revisa cada "
-                    "entrega y le pide rehacerla una vez si no cumple. Lo que se corrige se guarda como **lección** para las siguientes valoraciones.")
-    with st.form("new_co"):
-        data = company_fields("nc_", {})
-        preset = st.selectbox("Plantilla de especialistas", list(PRESETS), format_func=lambda k: PRESETS[k]["label"],
-                              help="Podrás activar o desactivar módulos después en Configuración.")
-        yahoo = st.checkbox("Descargar datos de Yahoo Finance si pones ticker (gratis)", value=True)
-        investigar = st.checkbox("Investigar también en la web con Claude (de pago: ~0,05-0,15 $)", value=False)
-        ok = st.form_submit_button("Crear empresa", type="primary")
-    if ok:
-        if not data["nombre"].strip():
-            st.error("Ponle nombre a la empresa.")
-            return
-        if preset == "banca":
-            data["tipo"] = "financiera"
-        p = {"id": storage.new_id("e_"), **data, "modulos": list(PRESETS[preset]["mods"]), "revision": False,
-             "web_especialistas": False, "web_uses": 2, "web_uses_research": 5, "agentes": {}, "info": [], "log": [],
-             "resumen": None, "estado": "setup", "coste": 0.0, "creado": E.today()}
-        E.add_log(p, "CEO", f"Empresa creada: {p['nombre']} ({PRESETS[preset]['label']}).")
-        if yahoo and p.get("ticker", "").strip():
-            try:
-                with st.spinner("Descargando datos de Yahoo Finance…"):
-                    add_yahoo(p, p["ticker"], [])
-            except E.MapsError as e:
-                flash("warning", str(e))
-        storage.save_company(p)
-        ss.cid_next = p["id"]
+        st.markdown(f'<div class="vl-eyebrow">{APP_NAME}</div>', unsafe_allow_html=True)
+        st.title("Análisis y valoración de empresas, con un equipo de especialistas", anchor=False)
+        st.markdown("Escribe una empresa y elige qué quieres saber. Un equipo de analistas de IA estudia sus cuentas, "
+                    "su sector y su mercado, y un supervisor revisa cada entrega antes de darla por buena.")
+        cols = st.columns(3)
+        for col, (ic, tit, txt) in zip(cols, [
+                (":material/database:", "Datos de mercado", "Cotización, cuentas de 4 años y comparables desde Yahoo Finance, sin coste."),
+                (":material/groups:", "Especialistas", "Analista financiero, sectorial, DCF, comparables, riesgos y un abogado del diablo."),
+                (":material/fact_check:", "Decisiones explicadas", "Cada especialista explica cómo ha decidido y el supervisor valida su trabajo.")]):
+            with col.container(border=True):
+                st.markdown(f"**{ic} {tit}**")
+                st.caption(txt)
+        st.write("")
+    else:
+        st.title("Nuevo informe", anchor=False)
+        st.caption("Escribe la empresa, elige qué quieres saber y los especialistas se ponen a trabajar.")
+
+    # 1 · Empresa
+    with st.container(border=True):
+        st.markdown("#### 1 · ¿Qué empresa?")
+        q = st.text_input("Nombre de la empresa", key="new_q", placeholder="Ej.: Inditex, Iberdrola, Apple…",
+                          help="Al pulsar Enter se busca en Yahoo Finance y te propone su ticker.")
+        prof, symbol, cotiza = None, "", False
+        manual = {}
+        if q.strip():
+            with st.spinner("Buscando en Yahoo Finance…"):
+                res = buscar_empresas(q.strip())
+            opts = [r["symbol"] for r in res] + [MANUAL, NO_COTIZA]
+            names = {r["symbol"]: f"**{r['symbol']}** · {r['nombre']} · {r['bolsa']}" for r in res}
+            names.update({MANUAL: "Es otro ticker: lo escribo yo", NO_COTIZA: "No cotiza en bolsa"})
+            if not res:
+                st.caption("Yahoo Finance no encuentra ninguna empresa cotizada con ese nombre.")
+            pick = st.radio("¿Cuál es?", opts, key=f"new_pick_{q.strip().lower()}", format_func=names.get,
+                            help="Normalmente la primera es la bolsa principal de la empresa.")
+            if pick == MANUAL:
+                symbol = st.text_input("Ticker", key="new_ticker", placeholder="Ej.: ITX.MC (Madrid), AAPL (EE. UU.), MC.PA (París)").strip().upper()
+            elif pick != NO_COTIZA:
+                symbol = pick
+            if symbol:
+                with st.spinner("Cargando la ficha…"):
+                    prof = ficha(symbol)
+                if prof:
+                    cotiza = True
+                    precio = f" · {fmt(prof['precio'])} {prof['moneda_cotiz']}" if prof.get("precio") else ""
+                    st.success(f"**{prof['nombre']}** ({prof['symbol']}) · {prof['industria'] or prof['sector']} · "
+                               f"{prof['pais']}{precio}" + (" · entidad financiera" if prof["financiera"] else ""),
+                               icon=":material/check_circle:")
+                    if prof.get("descripcion"):
+                        with st.expander("A qué se dedica (Yahoo Finance)"):
+                            st.caption(prof["descripcion"] + "…")
+                else:
+                    st.warning(f"Yahoo Finance no tiene datos de «{symbol}». Revisa el ticker o elige «No cotiza».")
+            if pick == NO_COTIZA:
+                c1, c2, c3 = st.columns(3)
+                manual = {"sector": c1.text_input("Sector / actividad", key="new_sector", placeholder="Ej.: distribución alimentaria"),
+                          "pais": c2.text_input("País", "España", key="new_pais"),
+                          "moneda": c3.text_input("Moneda", "EUR", key="new_moneda")}
+                manual["tipo"] = st.selectbox("Tipo de entidad", list(TIPOS), format_func=TIPOS.get, key="new_tipo")
+
+    # 2 · Trabajo
+    with st.container(border=True):
+        st.markdown("#### 2 · ¿Qué quieres hacer?")
+        keys = list(TRABAJOS)
+        trabajo = st.radio("Tipo de trabajo", keys, key="new_trabajo", index=keys.index("valoracion"), label_visibility="collapsed",
+                           format_func=lambda k: f"{TRABAJOS[k]['icono']} {TRABAJOS[k]['label']}",
+                           captions=[f"{TRABAJOS[k]['desc']} Coste aprox. con Haiku: {TRABAJOS[k]['coste']}." for k in keys])
+        tipo = "financiera" if (prof and prof["financiera"]) else manual.get("tipo", "empresa")
+        n = len(mods_for(trabajo, tipo, cotiza))
+        st.caption(f"Trabajarán **{n} especialistas**. Podrás cambiarlos después en Configuración.")
+
+    # 3 · Opciones
+    with st.expander("Opciones (opcional)", icon=":material/tune:"):
+        def_prop = TRABAJOS[trabajo].get("proposito") or PROPOSITOS[0]
+        c1, c2 = st.columns(2)
+        proposito = c1.selectbox("Propósito", PROPOSITOS, index=PROPOSITOS.index(def_prop), key=f"new_prop_{trabajo}")
+        fecha = c2.date_input("Fecha del análisis", value=E.dt.date.today(), key="new_fecha").isoformat()
+        notas = st.text_area("Notas para los especialistas", key="new_notas",
+                             placeholder="Ej.: valorar solo el negocio en España; el comprador potencial es un grupo francés…")
+        comps_auto = st.checkbox("Añadir comparables automáticamente desde Yahoo Finance (gratis)", value=True, key="new_comps",
+                                 help="Las principales empresas cotizadas de su misma industria. Suelen ser estadounidenses.")
+        investigar = st.checkbox("Investigar también en la web con Claude (de pago: ~0,05-0,15 $)", value=False, key="new_web")
+
+    problema = ""
+    if not q.strip():
+        problema = "Escribe el nombre de la empresa."
+    elif symbol and not prof:
+        problema = "El ticker no es válido."
+    elif TRABAJOS[trabajo].get("requiere_cotizar") and not cotiza:
+        problema = "«¿Comprar la acción?» necesita una empresa cotizada."
+    c1, c2 = st.columns([1, 3], vertical_alignment="center")
+    go_ = c1.button("Generar informe", type="primary", icon=":material/rocket_launch:", use_container_width=True, disabled=bool(problema))
+    if problema:
+        c2.caption(problema)
+    elif not ctx:
+        c2.caption("Sin API key se prepararán los datos, pero los especialistas no empezarán hasta que la añadas en la barra lateral.")
+    if companies and st.button("Cancelar", icon=":material/close:"):
         ss.page = "main"
+        st.rerun()
+    if not go_:
+        return
+
+    data = {"nombre": prof["nombre"] if prof else q.strip(), "sector": (prof["industria"] or prof["sector"]) if prof else manual.get("sector", ""),
+            "pais": prof["pais"] if prof else manual.get("pais", ""), "moneda": prof["moneda"] if prof else manual.get("moneda", "EUR"),
+            "fecha": fecha, "proposito": proposito, "tipo": tipo, "ticker": symbol if prof else "", "cotiza": cotiza, "notas": notas}
+    p = {"id": storage.new_id("e_"), **data, "trabajo": trabajo, "modulos": mods_for(trabajo, tipo, cotiza), "revision": False,
+         "web_especialistas": False, "web_uses": 2, "web_uses_research": 5, "agentes": {}, "info": [], "log": [],
+         "resumen": None, "estado": "setup", "coste": 0.0, "creado": E.today()}
+    E.add_log(p, "CEO", f"Nuevo trabajo: {TRABAJOS[trabajo]['label']} de {p['nombre']}.")
+    if prof:
+        try:
+            with st.spinner("Descargando datos de Yahoo Finance…"):
+                peers = market.peers(prof["industry_key"], prof["symbol"]) if comps_auto else []
+                add_yahoo(p, prof["symbol"], peers)
+        except E.MapsError as e:
+            flash("warning", str(e))
+    storage.save_company(p)
+    ss.cid_next = p["id"]
+    ss.page = "main"
+    if investigar and ctx:
+        ss.research_req = ("inicial", None)
+        ss.run_after_research = True
         ss.goto = "Información"
-        if investigar:
-            ss.research_req = ("inicial", None)
-        st.rerun()
-    if companies and st.button("Cancelar"):
-        ss.page = "main"
-        st.rerun()
+    elif ctx:
+        ss.run_req = 0
+        ss.goto = "Cadena"
+    else:
+        ss.goto = "Cadena"
+        flash("info", "Datos preparados. Añade tu API key en la barra lateral y pulsa «Ejecutar cadena».")
+    st.rerun()
 
 
 # ─────────────────────────── cadena ───────────────────────────
@@ -322,11 +455,16 @@ def metrics_row() -> None:
     ap = sum(E.agent(P, d["id"])["status"] == "approved" for d in chain_)
     r = P.get("resumen")
     c = st.columns(5)
-    c[0].metric("Progreso", f"{ap} / {len(chain_)}", help="Especialistas aprobados")
-    c[1].metric("Valor del equity", f"{fmt(r['final']['min'])}–{fmt(r['final']['max'])} {r['unidad']}" if r else "Pendiente")
-    c[2].metric("Por acción", f"{fmt(r['por_accion']['central'])} {r['moneda']}" if r and r.get("por_accion") else "–")
-    c[3].metric("Información", f"{len(P.get('info', []))} docs")
-    c[4].metric("Datos que faltan", len(E.missing_by_agent(P, customs)))
+    c[0].metric("Progreso", f"{ap} / {len(chain_)}", help="Especialistas aprobados", border=True)
+    if E.has_football(P):
+        c[1].metric("Valor del equity", f"{fmt(r['final']['min'])}–{fmt(r['final']['max'])} {r['unidad']}" if r else "Pendiente", border=True)
+        c[2].metric("Por acción", f"{fmt(r['por_accion']['central'])} {r['moneda']}" if r and r.get("por_accion") else "–", border=True)
+    else:
+        t = TRABAJOS.get(P.get("trabajo", ""), {})
+        c[1].metric("Trabajo", t.get("label", ""), border=True)
+        c[2].metric("Informe", "Listo" if E.agent(P, "sintesis")["status"] == "approved" else "En curso", border=True)
+    c[3].metric("Documentos", len(P.get("info", [])), border=True)
+    c[4].metric("Datos que faltan", len(E.missing_by_agent(P, customs)), border=True)
 
 
 def route_banner() -> None:
@@ -387,7 +525,7 @@ def page_chain() -> None:
         with st.container(key="agent_list"):
             for i, d in enumerate(chain_):
                 stt = E.agent(P, d["id"])["status"]
-                st.button(f"{STATUS[stt][1]} {i + 1} · {d['nombre']}", key=f"pick_{d['id']}", use_container_width=True,
+                st.button(f"{i + 1}. {d['nombre']}", key=f"pick_{d['id']}", use_container_width=True, icon=STATUS[stt][1],
                           type="primary" if d["id"] == ss.sel else "secondary",
                           help=f"**{icono(d)} {d['nombre']}**\n\n{resumen(d)}\n\nEstado: {STATUS[stt][0]}",
                           on_click=lambda aid=d["id"]: ss.update(sel=aid))
@@ -408,7 +546,7 @@ def agent_detail(chain_: list[dict], idx: int) -> None:
             meta.append(f"Supervisor: {s['score']}/10")
         if s.get("attempts"):
             meta.append(f"Rechazos: {s['attempts']} de {E.MAX_ATTEMPTS}")
-        st.markdown(f"{badge(s['status'])} &nbsp; <span class='maps-meta'>{' · '.join(meta)}</span>", unsafe_allow_html=True)
+        st.markdown(f"{badge(s['status'])} &nbsp; <span class='vl-meta'>{' · '.join(meta)}</span>", unsafe_allow_html=True)
         st.markdown(f"*{resumen(d)}*")
 
         if s["status"] == "error":
@@ -488,7 +626,7 @@ def agent_detail(chain_: list[dict], idx: int) -> None:
             st.markdown("##### Revisiones del Supervisor")
             for h in reversed(hist):
                 ok = h["veredicto"] == "aprobar"
-                st.markdown(f"{'✅' if ok else '❌'} **Intento {h['intento']} · {'aprobado' if ok else 'rechazado'} "
+                st.markdown(f"{':material/check_circle:' if ok else ':material/cancel:'} **Intento {h['intento']} · {'aprobado' if ok else 'rechazado'} "
                             f"({h['puntuacion']}/10)** · {h['fecha']}  \n{md(h['feedback'])}")
         if s.get("busquedas"):
             st.markdown("##### Búsquedas web que hizo")
@@ -592,7 +730,7 @@ def run_research(box, kind: str, query: str | None) -> None:
         titulo = f"Investigación web: datos que faltaban ({E.today()})"
     else:
         encargo, titulo = query, f"Investigación web: {query[:60]}"
-    with box.status("🔎 El investigador está buscando en la web…", expanded=True) as stt:
+    with box.status("El investigador está buscando en la web…", expanded=True) as stt:
         ph_s, ph = st.empty(), st.empty()
         last = [0.0]
 
@@ -611,6 +749,9 @@ def run_research(box, kind: str, query: str | None) -> None:
             st.rerun()
         stt.update(label=f"Investigación terminada: {len(doc['fuentes'])} fuentes", state="complete", expanded=False)
     save()
+    if ss.pop("run_after_research", False):
+        flash("success", f"Añadido «{titulo}». Los especialistas empiezan a trabajar.")
+        request_run(0)
     after_new_info(doc)
     save()
     flash("success", f"Añadido «{titulo}».")
@@ -627,7 +768,7 @@ def page_info() -> None:
     left, right = st.columns([1.1, 1], gap="large")
     with left:
         with st.container(border=True):
-            st.markdown("#### 📈 Yahoo Finance (gratis)")
+            st.markdown("#### :material/candlestick_chart: Yahoo Finance · gratis")
             st.caption("Cotización, múltiplos, consenso de analistas y cuentas anuales de los últimos 4 años. No gasta API.")
             with st.form("yahoo_form"):
                 c1, c2 = st.columns([1, 2])
@@ -651,7 +792,7 @@ def page_info() -> None:
                         st.error(str(e))
 
         with st.container(border=True):
-            st.markdown("#### 🔎 Investigación web")
+            st.markdown("#### :material/travel_explore: Investigación web · de pago")
             st.caption("Claude busca datos públicos (resultados, cotización, comparables, transacciones, tipos) y los guarda con sus fuentes.")
             faltan = E.missing_by_agent(P, customs)
             c1, c2 = st.columns(2)
@@ -668,7 +809,7 @@ def page_info() -> None:
                     st.rerun()
 
         with st.container(border=True):
-            st.markdown("#### ✍️ Aportar información a mano")
+            st.markdown("#### :material/upload_file: Aportar información")
             st.caption("Pega o sube cuentas anuales, presentaciones, presupuestos, cotizaciones, condiciones de una oferta…")
             with st.form("info_form", clear_on_submit=True):
                 titulo = st.text_input("Título", placeholder="Ej.: Presentación de resultados 2T 2026")
@@ -711,7 +852,7 @@ def page_info() -> None:
         if not P.get("info"):
             st.caption("Todavía no hay documentos.")
         for d in reversed(P.get("info", [])):
-            icon = {"web": "🌐", "archivo": "📎", "yahoo": "📈"}.get(d.get("origen"), "✍️")
+            icon = {"web": ":material/public:", "archivo": ":material/attach_file:", "yahoo": ":material/candlestick_chart:"}.get(d.get("origen"), ":material/edit_note:")
             with st.expander(f"{icon} {d['titulo']} · {d.get('fecha', '')}"):
                 if d.get("resumen"):
                     st.caption("Extracto que usan los especialistas:")
@@ -734,12 +875,12 @@ def page_info() -> None:
 def football_chart(r: dict) -> go.Figure:
     ms = r["metodos"]
     fig = go.Figure(go.Bar(y=[m["metodo"] for m in ms], x=[m["max"] - m["min"] for m in ms], base=[m["min"] for m in ms],
-                           orientation="h", marker_color="#2447D6", opacity=.85,
+                           orientation="h", marker_color="#1F3A68", opacity=.9,
                            text=[f"{fmt(m['min'])} – {fmt(m['max'])}" for m in ms], textposition="outside",
                            hovertemplate="%{y}: %{base:.1f} – %{customdata:.1f}<extra></extra>", customdata=[m["max"] for m in ms]))
-    fig.add_vrect(x0=r["final"]["min"], x1=r["final"]["max"], fillcolor="#0F7F58", opacity=.13, line_width=0,
+    fig.add_vrect(x0=r["final"]["min"], x1=r["final"]["max"], fillcolor="#15803D", opacity=.12, line_width=0,
                   annotation_text="Rango final", annotation_position="top left")
-    fig.add_vline(x=r["final"]["central"], line_color="#0F7F58", line_width=2,
+    fig.add_vline(x=r["final"]["central"], line_color="#15803D", line_width=2,
                   annotation_text=f"Central {fmt(r['final']['central'])}", annotation_position="bottom right")
     fig.update_layout(height=90 + 46 * len(ms), margin=dict(l=10, r=40, t=30, b=30), showlegend=False,
                       xaxis_title=f"Valor del equity ({r['unidad']} {r['moneda']})", yaxis=dict(autorange="reversed"))
@@ -749,18 +890,32 @@ def football_chart(r: dict) -> go.Figure:
 def page_report() -> None:
     r = P.get("resumen")
     chain_ = ch()
+    if not E.has_football(P):
+        final = E.agent(P, "sintesis")
+        with st.container(border=True):
+            st.markdown("#### :material/monitor_heart: Informe de situación")
+            if final["output"]:
+                st.markdown(md(E.without_sections(final["output"], ["Cómo lo he decidido", "Datos que faltan"])))
+            else:
+                st.caption("El informe aparece cuando el Director del informe termina y el Supervisor lo aprueba.")
+    else:
+        football_block(r)
+    report_documents(chain_)
+
+
+def football_block(r: dict | None) -> None:
     with st.container(border=True):
         st.markdown("#### Football field")
         if r:
             c = st.columns(4)
-            c[0].metric("Rango final", f"{fmt(r['final']['min'])} – {fmt(r['final']['max'])} {r['unidad']} {r['moneda']}")
-            c[1].metric("Valor central", f"{fmt(r['final']['central'])} {r['unidad']}")
+            c[0].metric("Rango final", f"{fmt(r['final']['min'])} – {fmt(r['final']['max'])} {r['unidad']} {r['moneda']}", border=True)
+            c[1].metric("Valor central", f"{fmt(r['final']['central'])} {r['unidad']}", border=True)
             pa = r.get("por_accion")
             if pa:
-                c[2].metric("Por acción", f"{fmt(pa['min'])} – {fmt(pa['max'])} {r['moneda']}")
+                c[2].metric("Por acción", f"{fmt(pa['min'])} – {fmt(pa['max'])} {r['moneda']}", border=True)
                 if r.get("precio_actual"):
                     pot = (pa["central"] / r["precio_actual"] - 1) * 100
-                    c[3].metric("Frente a la cotización", f"{fmt(r['precio_actual'])} {r['moneda']}", f"{pot:+.1f} % potencial")
+                    c[3].metric("Frente a la cotización", f"{fmt(r['precio_actual'])} {r['moneda']}", f"{pot:+.1f} % potencial", border=True)
             if r.get("frase"):
                 st.markdown(md(r["frase"]))
             if r["metodos"]:
@@ -776,17 +931,22 @@ def page_report() -> None:
         else:
             st.caption("El gráfico aparece cuando el Director de síntesis termina y el Supervisor lo aprueba.")
 
+
+def report_documents(chain_: list[dict]) -> None:
     done = [d for d in chain_ if E.agent(P, d["id"])["output"]]
-    c1, _ = st.columns([1, 4])
-    c1.download_button("⬇ Descargar informe (.md)", E.report_md(P, customs), file_name=f"Valoracion_{P['nombre'].replace(' ', '_')}.md",
-                       mime="text/markdown", disabled=not done)
+    c1, c2 = st.columns([1, 3], vertical_alignment="center")
+    c1.download_button("Descargar informe (.md)", E.report_md(P, customs), icon=":material/download:",
+                       file_name=f"Informe_{P['nombre'].replace(' ', '_')}.md", mime="text/markdown", disabled=not done,
+                       use_container_width=True)
+    c2.caption("Incluye el trabajo de todos los especialistas y las fuentes.")
     if not done:
-        st.caption("Documento Maestro vacío. Se llena a medida que el Supervisor aprueba outputs.")
+        st.caption("Todavía no hay trabajo aprobado. Se va llenando a medida que el Supervisor aprueba a cada especialista.")
+        return
+    st.markdown("#### Trabajo de cada especialista")
     for d in done:
         s = E.agent(P, d["id"])
-        st.markdown(f"### {d['nombre']}  \n{STATUS[s['status']][1]} {STATUS[s['status']][0]}")
-        st.markdown(md(s["output"]))
-        st.divider()
+        with st.expander(f"{icono(d)} {d['nombre']} · {STATUS[s['status']][0]}"):
+            st.markdown(md(s["output"]))
 
 
 # ─────────────────────────── memoria ───────────────────────────
@@ -808,7 +968,7 @@ def page_memory() -> None:
                 for i, l in enumerate(ls):
                     c1, c2 = st.columns([12, 1])
                     c1.markdown(f"{md(l['texto'])}  \n:gray[{l.get('origen', '')} · {l.get('empresa', '')} · {l.get('fecha', '')}]")
-                    if c2.button("✕", key=f"dl_{d['id']}_{i}", help="Borrar lección"):
+                    if c2.button("Borrar", key=f"dl_{d['id']}_{i}", icon=":material/delete:", help="Borrar lección"):
                         ls.pop(i)
                         storage.save_memoria(memoria)
                         st.rerun()
@@ -850,6 +1010,25 @@ def page_config() -> None:
             save()
         st.caption("Coste orientativo de una cadena completa: ~0,3-0,8 $ con Haiku 4.5, ~1,5-4 $ con Sonnet 5 y 3-10 $ con Opus 5. "
                    "Cada búsqueda web cuesta 0,01 $ y además añade texto que se cobra como entrada.")
+
+    with st.container(border=True):
+        st.markdown("#### Tipo de trabajo")
+        keys = list(TRABAJOS)
+        cur = P.get("trabajo", "valoracion")
+        c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
+        nuevo = c1.selectbox("Qué quieres obtener", keys, index=keys.index(cur) if cur in keys else 2,
+                             format_func=lambda k: f"{TRABAJOS[k]['label']} — {TRABAJOS[k]['desc']}")
+        if c2.button("Cambiar", disabled=nuevo == cur, use_container_width=True):
+            P["trabajo"] = nuevo
+            if TRABAJOS[nuevo].get("proposito"):
+                P["proposito"] = TRABAJOS[nuevo]["proposito"]
+            apply_mods(mods_for(nuevo, P.get("tipo", "empresa"), P.get("cotiza", False)))
+            E.invalidate_from(P, customs, 0)
+            P["resumen"] = None
+            E.add_log(P, "CEO", f"Tipo de trabajo cambiado a {TRABAJOS[nuevo]['label']}.")
+            save()
+            flash("success", "Tipo de trabajo cambiado. Pulsa «Continuar» en la Cadena para rehacer el trabajo.")
+            st.rerun()
 
     with st.container(border=True):
         st.markdown(f"#### Módulos de la cadena ({len(ch())} activos)")
@@ -937,8 +1116,16 @@ if ss.page == "nueva" or not P:
 else:
     if "goto" in ss:
         ss.nav_radio = ss.pop("goto")
+    t = TRABAJOS.get(P.get("trabajo", ""), {})
+    st.markdown(f'<div class="vl-eyebrow">{html.escape(t.get("label", "Informe"))}</div>', unsafe_allow_html=True)
     st.title(P["nombre"], anchor=False)
-    st.caption(" · ".join(x for x in [TIPOS.get(P.get("tipo", "empresa")), P.get("sector"), P.get("ticker"), P.get("proposito")] if x))
-    st.radio("Sección", NAV, key="nav_radio", horizontal=True, label_visibility="collapsed")
+    chips = [P.get("ticker"), P.get("sector"), P.get("pais"), TIPOS.get(P.get("tipo", "empresa")), f"Creado el {P.get('creado', '')}"]
+    st.markdown('<div class="vl-chips">' + "".join(f'<span class="vl-chip">{html.escape(str(c))}</span>' for c in chips if c)
+                + "</div>", unsafe_allow_html=True)
+    if ss.get("nav_radio") not in NAV:
+        ss.nav_radio = NAV[0]
+    st.segmented_control("Sección", NAV, key="nav_radio", required=True, label_visibility="collapsed",
+                         format_func=lambda n: f"{NAV_ICON[n]} {n}")
+    st.write("")
     {"Cadena": page_chain, "Información": page_info, "Informe": page_report,
      "Memoria": page_memory, "Configuración": page_config}[ss.nav_radio]()

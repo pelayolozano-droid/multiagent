@@ -1,1 +1,1 @@
-"""MAPS Valoración: sistema multi-agente de valoración de empresas."""
+"""Valoris: sistema multi-agente de valoración de empresas."""

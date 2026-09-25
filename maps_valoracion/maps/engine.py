@@ -1,4 +1,4 @@
-"""Motor de MAPS Valoración: prompts, llamadas a Claude, Supervisor y ejecución de la cadena."""
+"""Motor de Valoris: prompts, llamadas a Claude, Supervisor y ejecución de la cadena."""
 from __future__ import annotations
 
 import datetime as dt
@@ -10,7 +10,7 @@ import anthropic
 from pydantic import BaseModel
 
 from . import storage
-from .catalog import CATALOG, LEGACY_MODELS, MODELS, NOTA_FINANCIERA, STATUS, WEB_SEARCH_PRICE
+from .catalog import CATALOG, LEGACY_MODELS, MODELS, NOTA_FINANCIERA, STATUS, TRABAJOS, WEB_SEARCH_PRICE
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 MAX_ATTEMPTS = 2
@@ -36,7 +36,8 @@ def def_of(aid: str, customs: list[dict]) -> dict | None:
 
 def chain(p: dict, customs: list[dict]) -> list[dict]:
     on = set(p.get("modulos", []))
-    lst = [c for c in CATALOG if c.get("fixed") or c["id"] in on]
+    over = TRABAJOS.get(p.get("trabajo", ""), {}).get("overrides", {})
+    lst = [{**c, **over.get(c["id"], {})} for c in CATALOG if c.get("fixed") or c["id"] in on]
     for c in customs:
         if c["id"] not in on:
             continue
@@ -281,7 +282,7 @@ class Football(BaseModel):
 
 # ─────────────────────────── prompts ───────────────────────────
 
-SYSTEM = """Eres un especialista dentro de MAPS, un sistema multi-agente de valoración de empresas. Trabajáis en cadena: cada especialista recibe el trabajo ya aprobado de los anteriores (el Testigo), produce su parte y un Supervisor la revisa.
+SYSTEM = """Eres un especialista dentro de Valoris, un sistema multi-agente de valoración de empresas. Trabajáis en cadena: cada especialista recibe el trabajo ya aprobado de los anteriores (el Testigo), produce su parte y un Supervisor la revisa.
 
 Reglas de datos:
 - Prioridad de las fuentes: 1) información aportada (documentos del CEO, datos de Yahoo Finance, investigación web); 2) el Testigo; 3) conocimiento general. Si usas conocimiento general (primas de riesgo, múltiplos sectoriales típicos…), márcalo con [SUPUESTO] y explica el orden de magnitud.
@@ -302,7 +303,7 @@ Formato:
 (2-5 líneas con las cifras que necesita el siguiente especialista)
 ## Datos que faltan
 (lista de datos concretos que mejorarían tu análisis, o "Ninguno")
-- Escribe en español."""
+- Escribe en español, con tono profesional y sin emojis."""
 
 
 def empresa_header(p: dict) -> str:
@@ -310,6 +311,11 @@ def empresa_header(p: dict) -> str:
          f"\nTIPO: {'Entidad financiera' if p.get('tipo') == 'financiera' else 'Empresa no financiera'}"
          f"\nSECTOR: {p.get('sector') or 'no indicado'} · PAÍS: {p.get('pais') or 'no indicado'} · MONEDA: {p.get('moneda') or 'EUR'}"
          f"\nPROPÓSITO: {p.get('proposito') or 'no indicado'}\nFECHA DE VALORACIÓN: {p.get('fecha') or today()}")
+    t = TRABAJOS.get(p.get("trabajo", ""))
+    if t:
+        h += f"\nTRABAJO ENCARGADO: {t['label']}. {t['desc']}"
+        if not t.get("football", True):
+            h += " No se pide calcular el valor de la empresa: céntrate en diagnosticar su situación."
     if p.get("tipo") == "financiera":
         h += f"\n\n{NOTA_FINANCIERA}"
     if p.get("notas"):
@@ -381,7 +387,7 @@ def sup_prompt(p: dict, customs: list[dict], d: dict, out: str) -> str:
         cc = section(agent(p, x["id"])["output"], "Conclusión clave")
         if cc:
             prev.append(f"- {x['nombre']}: {' '.join(cc.split())[:600]}")
-    return f"""Eres el SUPERVISOR de MAPS, un sistema multi-agente de valoración de empresas. Revisa el trabajo de un especialista.
+    return f"""Eres el SUPERVISOR de Valoris, un sistema multi-agente de valoración de empresas. Revisa el trabajo de un especialista.
 
 {empresa_header(p)}
 
@@ -465,7 +471,7 @@ def run_agent(ctx: Ctx, p: dict, d: dict, hooks: Hooks) -> str:
             hooks.save()
             return "error"
         p["coste"] = p.get("coste", 0) + r.cost
-        s["output"] = r.text + ("\n\n> ⚠️ Respuesta cortada por longitud." if r.truncated else "")
+        s["output"] = r.text + ("\n\n> Aviso: respuesta cortada por longitud." if r.truncated else "")
         s["fuentes"] = r.sources
         s["pensamiento"] = r.thinking[-8000:]
         s["busquedas"] = r.queries
@@ -513,7 +519,7 @@ def run_agent(ctx: Ctx, p: dict, d: dict, hooks: Hooks) -> str:
 # ─────────────────────────── información e investigación ───────────────────────────
 
 def research_prompt(p: dict, encargo: str) -> str:
-    return f"""Eres el investigador de MAPS, un sistema de valoración de empresas. Busca en la web datos públicos y actuales para valorar esta empresa.
+    return f"""Eres el investigador de Valoris, un sistema de valoración de empresas. Busca en la web datos públicos y actuales para valorar esta empresa.
 
 {empresa_header(p)}
 
@@ -599,9 +605,14 @@ def route_info(ctx: Ctx, p: dict, doc: dict) -> dict | None:
     return {"resumen": r.resumen, "afectados": ids, "desde": next(i for i, d in enumerate(ch) if d["id"] in ids)}
 
 
+def has_football(p: dict) -> bool:
+    """El informe de situación no calcula un valor, así que no tiene football field."""
+    return TRABAJOS.get(p.get("trabajo", "valoracion"), {}).get("football", True)
+
+
 def extract_football(ctx: Ctx, p: dict) -> dict | None:
     out = agent(p, "sintesis")["output"]
-    if not out:
+    if not out or not has_football(p):
         return None
     r, cost = call_parse(ctx.client, ctx.settings,
         f"Del siguiente informe de síntesis de la valoración de {p['nombre']}, extrae los rangos de valor del EQUITY por método "
@@ -613,7 +624,8 @@ def extract_football(ctx: Ctx, p: dict) -> dict | None:
 
 
 def report_md(p: dict, customs: list[dict]) -> str:
-    m = f"# Valoración de {p['nombre']}\n\n" + "\n".join(f"- {l}" for l in empresa_header(p).split("\n") if l.strip()) + "\n\n"
+    titulo = TRABAJOS.get(p.get("trabajo", ""), {}).get("label", "Valoración")
+    m = f"# {titulo}: {p['nombre']}\n\n" +"\n".join(f"- {l}" for l in empresa_header(p).split("\n") if l.strip()) + "\n\n"
     r = p.get("resumen")
     if r:
         m += (f"## Rango de valor del equity\n\n**{r['final']['min']:,.1f} – {r['final']['max']:,.1f} {r['unidad']} {r['moneda']}** "
@@ -631,4 +643,4 @@ def report_md(p: dict, customs: list[dict]) -> str:
         m += "---\n\n## Fuentes de la investigación web\n\n"
         for d in fuentes_info:
             m += f"**{d['titulo']}**\n" + "\n".join(f"- [{f['titulo']}]({f['url']})" for f in d["fuentes"]) + "\n\n"
-    return m + f"---\n\n_Generado con MAPS Valoración · {dt.datetime.now():%d/%m/%Y %H:%M}_\n"
+    return m + f"---\n\n_Generado con Valoris · {dt.datetime.now():%d/%m/%Y %H:%M}_\n"

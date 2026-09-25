@@ -1,4 +1,4 @@
-"""Catálogo de especialistas, presets y constantes de MAPS Valoración."""
+"""Catálogo de especialistas, presets y constantes de Valoris."""
 
 CATALOG: list[dict] = [
     {"id": "encargo", "nombre": "Director del encargo", "grupo": "Núcleo", "fixed": True,
@@ -82,14 +82,14 @@ NOTA_FINANCIERA = (
 )
 
 STATUS = {
-    "pending":   ("En espera", "⚪"),
-    "active":    ("Trabajando", "🔵"),
-    "reviewing": ("Supervisor revisando", "🔵"),
-    "hold":      ("Espera tu visto bueno", "🟠"),
-    "approved":  ("Aprobado", "🟢"),
-    "stale":     ("Desactualizado", "🟡"),
-    "blocked":   ("Bloqueado", "🟣"),
-    "error":     ("Error", "🔴"),
+    "pending":   ("En espera", ":material/radio_button_unchecked:"),
+    "active":    ("Trabajando", ":material/progress_activity:"),
+    "reviewing": ("Supervisor revisando", ":material/rate_review:"),
+    "hold":      ("Espera tu visto bueno", ":material/pending_actions:"),
+    "approved":  ("Aprobado", ":material/check_circle:"),
+    "stale":     ("Desactualizado", ":material/update:"),
+    "blocked":   ("Bloqueado", ":material/block:"),
+    "error":     ("Error", ":material/error:"),
 }
 
 PROPOSITOS = [
@@ -100,6 +100,7 @@ PROPOSITOS = [
     "Fairness opinion / informe independiente",
     "Fiscal, herencia o reestructuración societaria",
     "Gestión interna / planificación",
+    "Diagnóstico de la situación de la empresa",
 ]
 
 # Precios por millón de tokens (entrada, salida) y búsqueda web por unidad.
@@ -118,3 +119,66 @@ from .guias import AYUDA  # noqa: E402
 
 for _c in CATALOG:
     _c.update(AYUDA.get(_c["id"], {}))
+
+# ─────────────── tipos de trabajo que elige el usuario al empezar ───────────────
+
+_SALUD_OVERRIDES = {
+    "encargo": {
+        "tarea": "Define el alcance del informe de situación (no es una valoración): qué preguntas debe responder (¿crece?, ¿es rentable?, ¿genera caja?, ¿está endeudada?, ¿cómo está frente a sus competidores?, ¿qué riesgos tiene?), periodo analizado, datos disponibles frente a necesarios y los 5 aspectos que más conviene vigilar.",
+        "criterios": ["Preguntas del informe concretas para esta empresa", "Inventario de datos disponibles frente a faltantes", "Aspectos a vigilar justificados"],
+        "resumen": "Decide qué preguntas debe responder el informe sobre la situación de la empresa y con qué datos.",
+    },
+    "sintesis": {
+        "nombre": "Director del informe",
+        "tarea": "Redacta el informe de situación de la empresa a partir del trabajo de los especialistas (no calcules un valor). Incluye: resumen ejecutivo (5-8 líneas); tabla semáforo; fortalezas; debilidades; principales riesgos; qué vigilar en los próximos trimestres; y una conclusión clara sobre la salud de la empresa.",
+        "criterios": ["Tabla semáforo completa con dato y motivo", "Fortalezas, debilidades y riesgos concretos", "Conclusión clara y coherente con los datos"],
+        "resumen": "Escribe el informe final: cómo está la empresa, con un semáforo de salud, fortalezas, debilidades y riesgos.",
+        "guia": """1. Resumen ejecutivo de 5-8 líneas para alguien no experto.
+2. Tabla semáforo: área · estado (Bien / Vigilar / Problema, en texto) · dato clave · motivo. Áreas:
+   - Crecimiento de ventas (frente al sector).
+   - Rentabilidad (margen EBITDA y ROE o ROCE).
+   - Generación de caja (FCF / EBITDA).
+   - Endeudamiento (deuda neta / EBITDA: menos de 2x bien, 2-3,5x vigilar, más de 3,5x problema; en bancos, CET1 y morosidad).
+   - Liquidez.
+   - Posición competitiva.
+   - Valoración de mercado, si cotiza (múltiplos frente a comparables).
+3. Fortalezas y debilidades: 3-5 de cada, con cifras.
+4. Riesgos principales, ordenados por impacto (usa la due diligence y el abogado del diablo).
+5. Qué vigilar: indicadores concretos y su umbral de alarma.
+6. Conclusión: una frase de diagnóstico (sólida / estable con puntos a vigilar / en dificultades) y por qué.""",
+    },
+}
+
+TRABAJOS: dict[str, dict] = {
+    "salud": {"label": "Informe de situación", "icono": ":material/monitor_heart:", "football": False,
+              "desc": "Cómo está la empresa hoy: crecimiento, rentabilidad, caja, deuda, competencia y riesgos. Sin calcular su valor.",
+              "coste": "~0,2-0,4 $", "proposito": "Diagnóstico de la situación de la empresa", "overrides": _SALUD_OVERRIDES},
+    "rapida": {"label": "Valoración rápida", "icono": ":material/bolt:", "football": True,
+               "desc": "Valor aproximado por múltiplos de empresas comparables y del mercado. La opción más barata.",
+               "coste": "~0,15-0,3 $", "proposito": None},
+    "valoracion": {"label": "Valoración completa", "icono": ":material/query_stats:", "football": True,
+                   "desc": "¿Cuánto vale la empresa? Proyecciones, DCF, comparables, sensibilidad y rango de valor final.",
+                   "coste": "~0,4-0,8 $", "proposito": None},
+    "inversion": {"label": "¿Comprar la acción?", "icono": ":material/show_chart:", "football": True, "requiere_cotizar": True,
+                  "desc": "Valor por acción frente a la cotización actual, potencial y recomendación de comprar, mantener o vender.",
+                  "coste": "~0,4-0,8 $", "proposito": "Análisis de inversión en bolsa"},
+    "ma": {"label": "Comprar o vender la empresa", "icono": ":material/handshake:", "football": True,
+           "desc": "Rango de precio negociable: transacciones del sector, sinergias, lo que pagaría un fondo y riesgos.",
+           "coste": "~0,6-1 $", "proposito": "Venta de la empresa o de una participación"},
+}
+
+
+def mods_for(trabajo: str, tipo: str, cotiza: bool) -> list[str]:
+    """Especialistas que se activan según el tipo de trabajo, de entidad y si cotiza."""
+    fin = tipo == "financiera"
+    mercado = ["mercado"] if cotiza else []
+    if trabajo == "salud":
+        return ["encargo", "financiero", "sector"] + mercado + ["due", "critico", "sintesis"]
+    if trabajo == "rapida":
+        return ["encargo", "financiero", "comps"] + mercado + ["sintesis"]
+    if trabajo == "ma":
+        base = PRESETS["banca"]["mods"] if fin else CORE
+        return list(dict.fromkeys(base + ["precedentes", "sinergias", "due"] + ([] if fin else ["lbo"])))
+    if fin:
+        return list(PRESETS["banca"]["mods"])
+    return CORE + (["mercado"] if cotiza or trabajo == "inversion" else []) + (["due"] if trabajo == "valoracion" else [])
